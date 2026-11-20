@@ -98,6 +98,10 @@ int main(){
   assert.equal(missing.phase, 'compile');
   assert.notEqual(missing.exit_code, 0);
   assert.match(missing.stderr, /outside\.h/);
+  const largeObject = await run('char data[2200000]={1};int main(){return data[0]==1?0:1;}');
+  assert.equal(largeObject.phase, 'compile');
+  assert.notEqual(largeObject.exit_code, 0);
+  assert.match(largeObject.stderr, /temporary file exceeds 2 MiB/);
 
   const binary = await run('#include <stdio.h>\nint main(){putchar(255);return 0;}');
   assert.equal(binary.phase, 'run');
