@@ -44,6 +44,15 @@ const total = rows('units.tsv').reduce((sum, [name, n]) => sum + n * prices.get(
 console.log(readStdin(), total);`;
   assert.deepEqual(await javascript(js, { files: jsFiles, stdin: '总额😀' }),
     { phase: 'run', exit_code: 0, stdout: '总额😀 72\n', stderr: '' });
+  const aliases = { project_prefix: 'notes/april/', files: { 'tables/ledger.csv': '茶,12' } };
+  const sameInput = await javascript(`console.log(readText('notes/april/tables/ledger.csv'),
+    readText('./tables/ledger.csv'), readText('tables/ledger.csv'))`, aliases);
+  assert.equal(sameInput.stdout, '茶,12 茶,12 茶,12\n');
+  for (const path of ['notes/april/private.csv', 'tables/../tables/ledger.csv']) {
+    const deniedAlias = await javascript(`readText(${JSON.stringify(path)})`, aliases);
+    assert.notEqual(deniedAlias.exit_code, 0);
+    assert.match(deniedAlias.stderr, /Selected: \["tables\/ledger\.csv"\]/);
+  }
   const jsError = await javascript('const broken = ');
   assert.equal(jsError.phase, 'compile');
   assert.notEqual(jsError.exit_code, 0);

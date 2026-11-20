@@ -9,6 +9,28 @@ __attribute__((import_module("orb"), import_name("started"))) void orb_started(v
 
 enum { INPUT_LIMIT = 256 * 1024 };
 
+// argv holds the trusted project's path prefix and exact selected relative
+// file names. Each alias resolves to the same read-only file in Wasm.
+static const char *project_prefix;
+static const char *selection_hint;
+static char **selected_files;
+
+static const char *selected_name(const char *path) {
+    for (char **file = selected_files; *file; file++) {
+        if (!strcmp(*file, path)) return *file;
+    }
+    return NULL;
+}
+
+static const char *resolve_input(const char *path) {
+    if (!strncmp(path, "./", 2)) return selected_name(path + 2);
+    if (project_prefix[0] && !strncmp(path, project_prefix, strlen(project_prefix))) {
+        const char *match = selected_name(path + strlen(project_prefix));
+        if (match) return match;
+    }
+    return selected_name(path);
+}
+
 static char *read_stream(FILE *stream, size_t *size) {
     char *text = malloc(INPUT_LIMIT + 1);
     if (!text) return NULL;
@@ -30,9 +52,10 @@ static JSValue read_text(JSContext *ctx, JSValueConst self, int argc,
         size_t length;
         const char *path = JS_ToCStringLen(ctx, &length, argv[0]);
         if (!path) return JS_EXCEPTION;
-        stream = memchr(path, '\0', length) ? NULL : fopen(path, "rb");
+        const char *name = memchr(path, '\0', length) ? NULL : resolve_input(path);
+        stream = name ? fopen(name, "rb") : NULL;
         JS_FreeCString(ctx, path);
-        if (!stream) return JS_ThrowReferenceError(ctx, "File not found in input_paths");
+        if (!stream) return JS_ThrowReferenceError(ctx, "File not found in input_paths. Selected: %s", selection_hint);
     }
     size_t length;
     char *text = read_stream(stream, &length);
@@ -76,7 +99,10 @@ static void track_rejection(JSContext *ctx, JSValueConst promise, JSValueConst r
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2) return 1;
+    if (argc < 4) return 1;
+    project_prefix = argv[2];
+    selection_hint = argv[3];
+    selected_files = argv + 4;
     FILE *entry = fopen(argv[1], "rb");
     if (!entry) { fputs("Cannot open JavaScript entry", stderr); return 1; }
     size_t size;

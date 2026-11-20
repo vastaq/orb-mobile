@@ -56,7 +56,7 @@ SOFTWARE.
 QuickJS JavaScript engine, 2026-06-04
 https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz
 Archive SHA-256: b376e839b322978313d929fd20663b11ba58b75df5a46c126dd19ea2fa70ad2a
-quickjs.wasm SHA-256: 05c7121d6597d6d9950fd6e3c108e4f1642f81705975bb6c11af207b14da804b
+quickjs.wasm SHA-256: a7b7ef82f3a9f7a75d8f25bd327fc820c4e110027f3e3733db44189d1f94f847
 
 Built with WASI SDK 25.0 (LLVM 19.1.5, wasi-libc 574b88da4815):
 https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25

@@ -65,6 +65,7 @@ Future<String> _assetBase64(String file) async {
 Future<Map<String, dynamic>> runWorkspaceProgram({
   required String source,
   required String entry,
+  String projectPrefix = '',
   required Map<String, String> files,
   List<String> units = const [],
   required String stdin,
@@ -79,6 +80,7 @@ Future<Map<String, dynamic>> runWorkspaceProgram({
       jsonEncode({
         'source': source,
         'entry': entry,
+        'project_prefix': projectPrefix,
         'files': files,
         'units': units,
         'stdin': stdin,

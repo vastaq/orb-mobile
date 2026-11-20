@@ -389,7 +389,14 @@ function report(request) {
     const project = prepareProject(request, stdin.length);
     if (request.entry.toLowerCase().endsWith('.js')) {
       if (request.units?.length) throw Error('JavaScript takes data files in input_paths, not C source_paths.');
-      const exit = execute(request.quickjs, ['quickjs', request.entry], stdin,
+      const prefix = request.project_prefix ?? '';
+      if (typeof prefix !== 'string' || (prefix && canonicalPath(prefix) + '/' !== prefix)) {
+        throw Error('Invalid workspace project prefix.');
+      }
+      const names = Object.keys(request.files);
+      const hint = JSON.stringify(names.slice(0, 8)) + (names.length > 8 ? ' (first 8)' : '');
+      const args = ['quickjs', request.entry, prefix, hint, ...names];
+      const exit = execute(request.quickjs, args, stdin,
         new VirtualFiles(project), stdout, stderr, () => {
           phase = 'run';
           self.postMessage({ started: 'run' });

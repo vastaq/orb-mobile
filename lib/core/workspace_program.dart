@@ -10,15 +10,16 @@ const workspaceProgramTool = ChatTool(
   description:
       'Run a saved JavaScript (.js, QuickJS) or C (.c) entry on the phone. '
       'For tabular, JSON, text or arithmetic tasks, use JavaScript to compute and verify the result. '
-      'In JavaScript use readText("data.tsv") for files listed in input_paths, readStdin() '
+      'When processing existing data, save the entry alongside those inputs, or in their common parent directory. '
+      'In JavaScript readText accepts the selected input’s workspace path ("project/data.tsv") '
+      'or its path relative to the entry ("./data.tsv"). Use readStdin() '
       'for the supplied stdin or stdin_path, and console.log(text) for stdout. '
       'Each console.log ends with a newline. No Node, browser, imports, or network. '
       'The entry path is workspace-relative. For a header such as #include "include/config.h", '
       'pass input_paths: ["./include/config.h"]. All ./ paths resolve under the entry folder. '
       'Use source_paths for any additional .c files to compile and link; use '
-      'input_paths for headers and read-only data. Only selected files in the '
-      'project are visible, under names relative to the entry directory. '
-      'Use a separate folder per project, e.g. tools/sum/main.c. '
+      'input_paths for headers and read-only data. C opens selected files '
+      'by names relative to the entry directory. '
       'Use standard C headers and main. Read stdin with getchar or fgets, write '
       'stdout with printf, and use fopen in read mode for listed project files. '
       'The bundled C library has limited scanf-family parsing and does not provide ferror; '
@@ -82,7 +83,7 @@ Future<Map<String, dynamic>> runStoredProgram(
     if (!path.contains('/')) return '$folder$path';
     if (folder.isEmpty || !path.startsWith(folder)) {
       throw OrbException(
-        '路径 $path 需要位于入口文件所在的项目目录中。项目内的子目录请写 ./$path，或使用含项目目录的完整工作区路径。',
+        '路径 $path 需要位于入口文件 ${source.path} 的项目目录中。处理已有数据时，把入口保存在这些输入的同一目录或共同父目录。目录内可用 ./ 相对路径或完整工作区路径。',
       );
     }
     return path;
@@ -169,6 +170,7 @@ Future<Map<String, dynamic>> runStoredProgram(
   final result = await runWorkspaceProgram(
     source: source.text,
     entry: entry,
+    projectPrefix: folder,
     units: [for (final path in units) path.substring(split)],
     files: files,
     stdin: stdin,
