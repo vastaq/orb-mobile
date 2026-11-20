@@ -328,7 +328,7 @@ class TaskService {
           tools: harness.tools,
           onTool: harness.run,
           thinking: await chat.preference('thinking') == '1',
-          search: await chat.preference('search') == '1',
+          search: await chat.preference('search') != '0',
           readLinks: await chat.preference('read_links') != '0',
           region: await chat.preference('region'),
         );
