@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:orb_mobile/core/models.dart' show OrbException;
 import 'package:orb_mobile/core/tool_types.dart';
 import 'package:orb_mobile/core/workspace.dart';
 
@@ -30,6 +31,15 @@ void main() {
     expect(original.text, contains(hit['text'] as String));
     final hash = found['file_hashes'][path];
     expect(hash, original.hash);
+    expect(hit['context'], isNull);
+    final nearby = await call('workspace_search', {
+      'query': '检查点',
+      'prefix': path,
+      'context_lines': 1,
+    });
+    final window = (nearby['matches'] as List).single;
+    expect(window['context_start_line'], 1);
+    expect(window['context'], '页首\r\n$longLine\r\n重复\r\n');
 
     final page = await call('workspace_read', {
       'path': path,
@@ -82,5 +92,52 @@ void main() {
       '${clipped['text']}${rest['text']}',
       huge.text.substring(huge.text.indexOf('\n') + 1),
     );
+  });
+
+  testWidgets('a batch of exact edits updates one saved revision atomically', (
+    _,
+  ) async {
+    final workspace = await Workspace.open();
+    final path =
+        'navigation-${DateTime.now().microsecondsSinceEpoch}/rates.txt';
+    final original = WorkFile(path, '北站=120\r\n保留🌿\r\n南站=45\r\n');
+    await workspace.save(original);
+    addTearDown(() => workspace.remove(path));
+
+    Future<Map<String, dynamic>> batch(
+      String hash,
+      List<Map<String, String>> edits,
+    ) => workspace.run(
+      ChatToolCall(
+        id: 'local',
+        name: 'workspace_edit',
+        arguments: {'path': path, 'expected_hash': hash, 'edits': edits},
+      ),
+    );
+
+    // Both ranges refer to the original file. The later record is supplied
+    // first, and its replacement introduces another copy of the earlier match.
+    final result = await batch(original.hash, [
+      {'old_text': '南站=45', 'new_text': '南站=187（原北站=120）'},
+      {'old_text': '北站=120', 'new_text': '北站=8'},
+    ]);
+    final saved = WorkFile(path, '北站=8\r\n保留🌿\r\n南站=187（原北站=120）\r\n');
+    expect(result['sha256'], saved.hash);
+    expect((await workspace.read(path))?.text, saved.text);
+
+    final valid = {'old_text': '北站=8', 'new_text': '北站=99'};
+    for (final (hash, second) in [
+      (saved.hash, {'old_text': '站=8', 'new_text': '站=80'}),
+      (saved.hash, {'old_text': '西站=80', 'new_text': '西站=81'}),
+      (original.hash, {'old_text': '南站=187', 'new_text': '南站=200'}),
+    ]) {
+      await expectLater(
+        batch(hash, [valid, second]),
+        throwsA(isA<OrbException>()),
+      );
+      final after = await workspace.read(path);
+      expect(after?.text, saved.text);
+      expect(after?.hash, saved.hash);
+    }
   });
 }
