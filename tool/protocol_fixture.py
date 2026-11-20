@@ -181,6 +181,44 @@ def choose(body):
             old_text=before,
             new_text=after,
         )
+    if query.startswith("请在项目 ") and " 检查求和程序" in query:
+        project = capture(r"项目 (orb-program-\d+) ", query)
+        limit = int(capture(r"从 1 加到 (\d+)", query))
+        total = limit * (limit + 1) // 2
+        path = project + "/main.c"
+        if "workspace_write" not in output:
+            source = (
+                "#include <stdio.h>\n"
+                "int main(void) {\n"
+                f"  int n = {limit};\n"
+                "  int total = n * (n - 1) / 2;\n"
+                '  printf("%d\\n", total);\n'
+                f"  if (total != {total}) return 7;\n"
+                "  return 0;\n"
+                "}\n"
+            )
+            return call("workspace_write", path=path, text=source)
+        run_count = list(calls.values()).count("workspace_run")
+        if not run_count:
+            return call("workspace_run", path=path)
+        result = output["workspace_run"]
+        if run_count == 1:
+            if result["exit_code"] != 7 or result["stdout"] != f"{total - limit}\n":
+                raise ValueError("initial program did not report the expected failing sum")
+            if "workspace_read" not in output:
+                return call("workspace_read", path=path)
+            if "workspace_edit" not in output:
+                return call(
+                    "workspace_edit",
+                    path=path,
+                    expected_hash=output["workspace_read"]["sha256"],
+                    old_text="n - 1",
+                    new_text="n + 1",
+                )
+            return call("workspace_run", path=path, output_path=project + "/result.txt")
+        if result["exit_code"] != 0 or result["stdout"] != f"{total}\n":
+            raise ValueError("repaired program did not pass the check")
+        return text("program-result", f"求和结果是 {result['stdout'].strip()}，已保存。")
     if "请读取工作区文件" in query:
         if any(n.startswith("schedule_") for n in names):
             raise ValueError(

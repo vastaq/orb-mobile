@@ -43,6 +43,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/program_runner/compiler.wasm
+    - assets/program_runner/worker.js
+    - assets/program_runner/THIRD_PARTY_NOTICES.txt
     - native/libfvad/LICENSE
     - native/libfvad/PATENTS
   fonts:

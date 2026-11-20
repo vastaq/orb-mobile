@@ -16,12 +16,19 @@
 | `core/mobile_tools.dart`、`ui/compose_tools.dart` | 手机命令与附件选择，产出可编辑文本或附件 | 一个新模板只是一段数据；新原生输入实现相同的草稿返回值 |
 | `core/mobile_harness.dart`、`tool_types.dart` | 向已选模型提供本轮工具，执行调用并把结果回送模型，保存回执 | 权限、调度、技能和工作文件在手机端独立校验 |
 | `core/workspace.dart`、`skill_packages.dart`、`mcp_client.dart` | 本地工作文件、用户安装的技能包与逐项授权的远端只读工具 | 工作文件可用内容哈希更新，技能按版本安装，MCP 服务走 Streamable HTTP |
+| `core/workspace_program.dart`、`program_runtime.dart`、`assets/program_runner/` | 把保存的 C 源码编译为 WebAssembly 并在手机上运行 | 工作区负责限定输入和保存输出，共享 Worker 负责编译、执行和资源上限。Android 与 iOS 仅托管一次执行会话 |
 | `core/overlay_engine.dart`、Android 原生服务 | 在其他应用的上层处理手势、录音与播放，经同一聊天控制器保存结果 | 系统窗口与手势留给 Android，共享对话和模型配置 |
 | `tasks/` | 聊天与任务页共用一次、每日、每周调度，记录执行和通知 | 同一到期时间只允许一个执行记录。iOS 后台模型执行时间由系统决定 |
 | `core/asset_bundle.dart` | 本机资产与普通目录的双向映射 | 新类别增加可读条目和导入预览，破坏兼容的变更升级版本号 |
 | `core/token_usage.dart` | 保存服务回报的请求级输入、输出和明细 | 新提供商落实它的计数口径，无法取得完整回报时保留未知 |
 
 Orb 借鉴了桌面 Harness 的工作方式。模型可以先查某个文件、按原文做一次替换，再用工具核实结果。手动启用的技能可以带说明和参考文件。需要访问另一项服务时，用户可通过 MCP 连接选择允许调用的只读工具。Android 和 iOS 都在应用沙盒里执行这些操作。当前发版未提供通用终端、任意插件进程或桌面级后台常驻服务。[DeepSeek Harness](https://www.deepseek.com/zh/harness/) · [Agent Skills](https://agentskills.io/specification) · [Android 应用沙盒](https://source.android.com/docs/security/app-sandbox)
+
+## 手机工作区程序
+
+支持执行的 Flutter 引擎会向本轮模型提供 `workspace_run`。Orb 沿用现有工作文件、工具循环和聊天回执。入口是已保存的 `.c` 文件；`stdin_path` 和 `input_paths` 由宿主在入口目录中解析，只有显式选中的文件会交给程序。程序可以用 `getchar` 读取标准输入，通过 `printf` 输出文本，或包括已选的本地头文件。完整的 C 标准库、通用 shell 和包管理器超出此运行时的范围。可运行的 C 语法见[编译器说明](https://github.com/divsmith/c2wasm/tree/4a688fe5bac3405cbbd17ebf3dbb1863a1420961)。
+
+两端从 App 内置资源启动同一个编译器和 Worker。每个模块最多使用 64 MiB 线性内存，编译和运行各有 8 秒时限。点击聊天的停止按钮会终止当前运行。标准输出和标准错误各限 64 KiB；标准输出和错误预览随工具结果发送至本轮选择的模型，每项最多 8,000 个字符，历史回执各保留最多 1,000 个字符。成功退出后可将完整标准输出保存为工作文件，覆盖已有内容沿用工作区的哈希检查。源码和文本产物可随原有资产包导出。
 
 ## 指令、记忆与长对话
 

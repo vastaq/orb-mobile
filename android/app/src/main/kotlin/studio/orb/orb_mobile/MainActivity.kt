@@ -17,6 +17,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
+        engine.plugins.add(WorkspaceProgramPlugin())
         MethodChannel(engine.dartExecutor.binaryMessenger, "studio.orb/overlay")
             .setMethodCallHandler { call, result ->
                 try {
