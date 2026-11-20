@@ -78,9 +78,15 @@ function encodeText(value, limit, label) {
   return bytes;
 }
 
-// A UTF-8 BOM is source-file metadata for the compiler, but data for a guest reader.
+// c2wasm skips system headers and implements getchar/printf directly. Supply the
+// stdio EOF macro on that same directive line, preserving __LINE__ and diagnostics.
+// These edits apply only to compilation; guest project reads retain the original bytes.
 function cSource(bytes) {
-  return bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
+  const source = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
+  const text = decoder.decode(source);
+  const stdio = /^[ \t]*#[ \t]*include[ \t]*<stdio\.h>(?=[ \t]*(?:\/\/|\/\*|\r?$))/gm;
+  const adjusted = text.replace(stdio, '#define EOF -1');
+  return adjusted === text ? source : encoder.encode(adjusted);
 }
 
 function prepareProject({ entry, files, source }, stdinSize) {

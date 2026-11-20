@@ -184,8 +184,8 @@ void main() {
     expect(await workspace.read(output), isNull);
     final recovered = await runStoredProgram(workspace, {
       'path': counter.path,
-      'stdin_path': input.path,
-      'output_path': output,
+      'stdin_path': 'input.txt',
+      'output_path': 'result.txt',
     });
     expect(recovered['exit_code'], 0, reason: '$recovered');
     expect(recovered['stdout'], '4\n');

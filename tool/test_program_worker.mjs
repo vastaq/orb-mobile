@@ -47,6 +47,14 @@ if (!isMainThread) {
   });
   assert.deepEqual(bomProject, { phase: 'run', exit_code: 3, stdout: '\ufeffabc', stderr: '' });
 
+  const stdio = '#include <stdio.h>\nint main(){int n=0;while(getchar()!=EOF)n++;printf("%d:%d",n,__LINE__);return 0;}';
+  assert.deepEqual(await run(stdio, { stdin: '123' }), { phase: 'run', exit_code: 0, stdout: '3:2', stderr: '' });
+  const header = '# include <stdio.h> // EOF required here\n';
+  const viaHeader = await run('#include "io.h"\nint main(){char b[9];int f=__open_file("io.h",4);int n=__read_file(f,b,8);b[n]=0;printf("%s",b);return getchar()==EOF ? 0 : 1;}', {
+    files: { 'src/io.h': header },
+  });
+  assert.deepEqual(viaHeader, { phase: 'run', exit_code: 0, stdout: header.slice(0, 8), stderr: '' });
+
   const binary = await run('int main(){putchar(255);return 0;}');
   assert.equal(binary.phase, 'run');
   assert.notEqual(binary.exit_code, 0);

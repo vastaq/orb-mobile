@@ -26,7 +26,7 @@
 ```sh
 flutter analyze
 flutter test
-flutter test -d "$DEVICE_ID" integration_test/run_all.dart \
+flutter test --no-uninstall -d "$DEVICE_ID" integration_test/run_all.dart \
   --dart-define=ORB_TEST_BASE_URL=http://127.0.0.1:18334/v1 \
   --dart-define=ORB_TEST_MODEL=orb-fixture-text \
   --dart-define=ORB_TEST_VISION_URL=http://127.0.0.1:18334/v1 \
@@ -35,6 +35,8 @@ flutter test -d "$DEVICE_ID" integration_test/run_all.dart \
 ```
 
 在明确提供无声麦克风输入的测试设备上，还可启用 `--dart-define=ORB_TEST_SILENT_MIC=true` 验证零转写调用。实体机语音质量和云服务模型表现需要各自的实际输入与服务凭据。
+
+工作区程序可单独运行 `integration_test/workspace_program_test.dart`。在装有日常使用版 Orb 的 Android 手机上，测试包需要独立的应用 ID。先构建测试 APK 并核对其中的实际包名，然后再指定设备运行并传入 `--no-uninstall`。Flutter 在首次构建前可能从 Gradle namespace 推断应用 ID，测试结束时会按预先解析的包名停止应用，默认还会卸载它。独立模拟器可直接使用以上命令。
 
 ## 0.3.0 build 7 实测结果
 

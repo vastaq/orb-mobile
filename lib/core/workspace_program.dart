@@ -9,7 +9,9 @@ const workspaceProgramTool = ChatTool(
   name: 'workspace_run',
   description:
       'Compile a saved C entry file to WebAssembly on the phone and run it. '
-      'Paths are workspace-relative. The program sees only listed input_paths '
+      'The entry path is workspace-relative. Other paths accept a simple filename '
+      'in the entry directory or a full workspace-relative path in that project. '
+      'The program sees only listed input_paths '
       'within the entry directory, under names relative to that directory. '
       'Use a separate folder per project, e.g. tools/sum/main.c. '
       'Supports integer C programs with main, printf and getchar (EOF=-1); '
@@ -60,7 +62,8 @@ Future<Map<String, dynamic>> runStoredProgram(
 
   String projectPath(Object? value) {
     final path = pathArgument(value);
-    if (folder.isEmpty ? path.contains('/') : !path.startsWith(folder)) {
+    if (!path.contains('/')) return '$folder$path';
+    if (folder.isEmpty || !path.startsWith(folder)) {
       throw const OrbException('输入和输出文件需要位于入口文件所在的项目目录中。');
     }
     return path;
