@@ -1,0 +1,1 @@
+The C sources under src/ and include/ are unmodified WebRTC voice activity detection code from [dpirch/libfvad](https://github.com/dpirch/libfvad/tree/532ab666c20d3cfda38bca63abbb0f152706c369), commit 532ab666c20d3cfda38bca63abbb0f152706c369. The BSD 3-Clause license, authors and patent grant are included alongside the sources.
