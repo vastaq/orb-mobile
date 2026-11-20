@@ -14,9 +14,10 @@ const workspaceProgramTool = ChatTool(
       'The program sees only listed input_paths '
       'within the entry directory, under names relative to that directory. '
       'Use a separate folder per project, e.g. tools/sum/main.c. '
-      'Supports integer C programs with main, printf and getchar (EOF=-1); '
-      'use stdin_path for a local UTF-8 file without copying its contents into chat. '
-      'Inspect phase, exit_code, stdout and stderr; fix the source and rerun on failure. '
+      'Use standard C headers and main. Read stdin with getchar or fgets, write '
+      'stdout with printf, and use fopen in read mode for listed project files. '
+      'Use stdin_path for a local UTF-8 file without copying its contents into chat. '
+      'On a compile error, edit the source using the returned sha256 before rerunning. '
       'To keep stdout as a file on success, set output_path. To replace different '
       'existing output, first read its sha256 and supply expected_output_hash. '
       'Each returned stream has at most 8000 code points; saved output contains the full stream.',
@@ -127,7 +128,17 @@ Future<Map<String, dynamic>> runStoredProgram(
     control: control,
   );
   if (control?.cancelled == true) throw const OrbException('程序运行已停止。');
-  final reply = {'path': source.path, ...result};
+  final reply = {
+    'path': source.path,
+    ...result,
+    if (result['phase'] == 'compile' && result['exit_code'] != 0) ...{
+      'sha256': source.hash,
+      'next_action':
+          'Use workspace_edit with this path and sha256 as expected_hash '
+          'to correct the compilation diagnostic, or supply a missing header in input_paths. '
+          'Rerunning unchanged source with a different stdin or output path cannot fix a compiler error.',
+    },
+  };
   if (outputPath != null &&
       result['phase'] == 'run' &&
       result['exit_code'] == 0) {

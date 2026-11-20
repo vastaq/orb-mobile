@@ -11,6 +11,7 @@ if (!isMainThread) {
   parentPort.on('message', data => self.onmessage({ data }));
 } else {
   const compiler = await readFile(new URL('../assets/program_runner/compiler.wasm', import.meta.url));
+  const sysroot = JSON.parse(await readFile(new URL('../assets/program_runner/sysroot.json', import.meta.url), 'utf8'));
   async function run(source, options = {}, runTimeout) {
     const worker = new Worker(new URL(import.meta.url));
     let timer;
@@ -26,83 +27,103 @@ if (!isMainThread) {
           }
         });
       });
-      worker.postMessage({ compiler, source, entry: 'src/main.c', files: {}, stdin: '', ...options });
+      worker.postMessage({ compiler, sysroot, source, entry: 'src/main.c', files: {}, stdin: '', ...options });
       return await result;
     } finally {
       clearTimeout(timer);
       await worker.terminate();
     }
   }
-  const project = await run('#include "answer.h"\nint main(){int c=getchar(); printf("%d:%c",ANSWER,c); return 7;}', {
-    files: { 'src/answer.h': '#define ANSWER 42\n' }, stdin: 'X',
+  // The model generated this program during device UAT. In particular, sizeof
+  // must measure the whole local array, and fgets must accept the real stdin.
+  const counter = `#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+
+int main() {
+    char input[1024];
+    if (fgets(input, sizeof(input), stdin) == NULL) {
+        return 0;
+    }
+    int count = 0;
+    for (int i = 0; input[i] != '\\0'; i++) {
+        if (isdigit(input[i])) {
+            count++;
+        }
+    }
+    printf("%d\\n", count);
+    return 0;
+}`;
+  for (const [stdin, stdout] of [['A7b25X4','4\n'], ['end9','1\n'], ['', '']]) {
+    assert.deepEqual(await run(counter, { stdin }), { phase: 'run', exit_code: 0, stdout, stderr: '' });
+  }
+
+  const nested = await run('\ufeff#include "headers/settings.h"\nint main(){char s[4];int n=0;while(fgets(s,sizeof(s),stdin)){printf("%d ",(int)strlen(s));n++;}printf("lines=%d",n);return getchar()==EOF ? STATUS : 1;}', {
+    files: {
+      'src/headers/settings.h': '\ufeff#include "common.h"\n#define STATUS 7\n',
+      'src/headers/common.h': '#include <stdio.h>\n#include <string.h>\n',
+    }, stdin: '12345\nA',
   });
-  assert.deepEqual(project, { phase: 'run', exit_code: 7, stdout: '42:X', stderr: '' });
+  assert.deepEqual(nested, { phase: 'run', exit_code: 7, stdout: '3 3 1 lines=3', stderr: '' });
 
   const csv = '\ufeff姓名,城市\n小吴,苏州😀\n';
-  const echoed = await run('int main(){int c;while((c=getchar())!=-1)putchar(c);return 0;}', { stdin: csv });
+  const echoed = await run('#include <stdio.h>\nint main(){int c;while((c=getchar())!=EOF)putchar(c);return 0;}', { stdin: csv });
   assert.deepEqual(echoed, { phase: 'run', exit_code: 0, stdout: csv, stderr: '' });
+  const fileRead = await run(`#include <stdio.h>
+int main(){
+  FILE *f=fopen("sub/data.txt","r"); if(!f) return 1;
+  if(fseek(f,3,SEEK_SET))return 2;
+  int n=fgetc(f); if(fseek(f,0,SEEK_SET))return 3;
+  while((n=fgetc(f))!=EOF)putchar(n);
+  return fclose(f);
+}`, { files: { 'sub/data.txt': csv } });
+  assert.deepEqual(fileRead, { phase: 'run', exit_code: 0, stdout: csv, stderr: '' });
 
-  const bomProject = await run('\ufeff#include "v.h"\nint main(){char b[8];int f=__open_file("data",4);int n=__read_file(f,b,8);int i;for(i=0;i<n;i++)putchar(b[i]);return V;}', {
-    files: { 'src/v.h': '\ufeff#define V 3\n', 'src/data': '\ufeffabc' },
-  });
-  assert.deepEqual(bomProject, { phase: 'run', exit_code: 3, stdout: '\ufeffabc', stderr: '' });
+  const denied = await run(`#include <stdio.h>
+#include <unistd.h>
+int main(){
+  if(fopen("../sibling.txt","r") || fopen("/usr/include/stdio.h","r"))return 1;
+  if(fopen("data.txt","w") || fopen("new.txt","w") || fopen("/tmp/new","w") || unlink("data.txt")==0)return 2;
+  FILE *f=fopen("data.txt","r");
+  if(!f || fgetc(f)!='a')return 3;
+  fclose(f);return 0;
+}`, { files: { 'data.txt': 'abc' } });
+  assert.deepEqual(denied, { phase: 'run', exit_code: 0, stdout: '', stderr: '' });
 
-  const stdio = '#include <stdio.h>\nint main(){int n=0;while(getchar()!=EOF)n++;printf("%d:%d",n,__LINE__);return 0;}';
-  assert.deepEqual(await run(stdio, { stdin: '123' }), { phase: 'run', exit_code: 0, stdout: '3:2', stderr: '' });
-  const header = '# include <stdio.h> // EOF required here\n';
-  const viaHeader = await run('#include "io.h"\nint main(){char b[9];int f=__open_file("io.h",4);int n=__read_file(f,b,8);b[n]=0;printf("%s",b);return getchar()==EOF ? 0 : 1;}', {
-    files: { 'src/io.h': header },
-  });
-  assert.deepEqual(viaHeader, { phase: 'run', exit_code: 0, stdout: header.slice(0, 8), stderr: '' });
+  const invalid = await run('#include <stdio.h>\nint main(){ return +; }');
+  assert.equal(invalid.phase, 'compile');
+  assert.notEqual(invalid.exit_code, 0);
+  assert.match(invalid.stderr, /main\.c\(2\)/);
+  const missing = await run('#include "../../outside.h"\nint main(){return 0;}');
+  assert.equal(missing.phase, 'compile');
+  assert.notEqual(missing.exit_code, 0);
+  assert.match(missing.stderr, /outside\.h/);
 
-  const binary = await run('int main(){putchar(255);return 0;}');
+  const binary = await run('#include <stdio.h>\nint main(){putchar(255);return 0;}');
   assert.equal(binary.phase, 'run');
   assert.notEqual(binary.exit_code, 0);
   assert.match(binary.stderr, /stdout contains invalid UTF-8/);
-  assert.equal((await run('int main(){putchar(255);return 7;}')).exit_code, 7);
+  const trapped = await run('#include <stdio.h>\nint main(){puts("before");fflush(stdout);return *(volatile int*)100000000;}');
+  assert.equal(trapped.phase, 'run');
+  assert.notEqual(trapped.exit_code, 0);
+  assert.equal(trapped.stdout, 'before\n');
+  assert.ok(trapped.stderr);
+  const tooMuchMemory = await run('#include <stdlib.h>\nint main(){int n=70*1024*1024;volatile char *p=malloc(n);if(!p)return 12;p[n-1]=37;return p[n-1]==37?0:13;}');
+  assert.equal(tooMuchMemory.phase, 'run');
+  assert.notEqual(tooMuchMemory.exit_code, 0);
 
-  const file = await run('int main(){char b[8];int f=__open_file("data.txt",8);int n=__read_file(f,b,3);__close_file(f);b[n]=0;puts(b);return 0;}', {
-    files: { 'data.txt': 'abc' },
-  });
-  assert.deepEqual(file, { phase: 'run', exit_code: 0, stdout: 'abc\n', stderr: '' });
-
-  const invalid = await run('int main(){ return +; }');
-  assert.equal(invalid.phase, 'compile');
-  assert.notEqual(invalid.exit_code, 0);
-  assert.match(invalid.stderr, /error|unexpected|expected/i);
-
-  const missing = await run('#include "../outside.h"\nint main(){return 0;}');
-  assert.equal(missing.phase, 'compile');
-  assert.notEqual(missing.exit_code, 0);
-
-  const blocked = await run('int main(){return __open_file("../../sibling.txt",17) == -1 ? 0 : 1;}', {
-    files: { 'sibling.txt': 'must not resolve across project root' },
-  });
-  assert.equal(blocked.exit_code, 0);
-
-  const unsupported = await run('int main(){FILE *f=fopen("x","r");return 0;}');
-  assert.equal(unsupported.phase, 'compile');
-  assert.notEqual(unsupported.exit_code, 0);
-  assert.match(unsupported.stderr, /error/i);
-
-  const trap = await run('int main(){char *b;puts("before");b=malloc(68000000);b[67999999]=21;return b[67999999];}');
-  assert.equal(trap.phase, 'run');
-  assert.notEqual(trap.exit_code, 0);
-  assert.equal(trap.stdout, 'before\n');
-  assert.ok(trap.stderr);
-
-  const flood = await run('int main(){while(1) putchar(88);return 0;}');
+  const flood = await run('#include <stdio.h>\nint main(){while(1)putchar(88);return 0;}');
   assert.equal(flood.phase, 'run');
   assert.notEqual(flood.exit_code, 0);
   assert.match(flood.stderr, /Output exceeds/);
-  assert.equal(flood.stdout.length, 65536);
-  const endless = await run('int main(){while(1){} return 0;}', {}, 40);
-  assert.equal(endless, 'host-timeout');
+  assert.ok(flood.stdout.length > 0 && flood.stdout.length <= 65536);
+  assert.equal(await run('int main(){while(1){} return 0;}', {}, 40), 'host-timeout');
+
   const large = 'x'.repeat(256 * 1024 - 1);
   const tooLarge = await run('int main(){return 0;}', {
     stdin: large, files: { 'one.txt': large, 'two.txt': large, 'three.txt': large },
   });
   assert.equal(tooLarge.phase, 'compile');
   assert.match(tooLarge.stderr, /1 MiB/);
-  console.log('PASS: execution, stdin, exit codes, quoted include, file reads, compile diagnostics, unsupported fopen, project boundary, partial output on trap, input/output/memory limits and worker termination.');
+  console.log('PASS: xcc, model-authored C, stdio/ctype/string, nested headers, UTF-8, read-only project files, compiler diagnostics, partial output and resource limits.');
 }

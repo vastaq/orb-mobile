@@ -1,21 +1,17 @@
-// Dedicated, single-use worker. Only the packaged compiler and its Wasm output execute.
-// One C translation unit can include quoted project headers. Both includes and guest
-// file reads look in the entry directory, then the project root. c2wasm provides
-// __open_file(path, length), __read_file(fd, buffer, length), and __close_file(fd).
-// Its built-in C subset has getchar/printf; it does not implement standard fopen.
+// A single-use Web Worker compiles one C translation unit and runs its Wasm output.
 'use strict';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
 const strictText = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
-const FILE_LIMIT = 256 * 1024 - 1; // c2wasm's maximum quoted include size
+const FILE_LIMIT = 256 * 1024 - 1;
 const PROJECT_LIMIT = 1024 * 1024;
 const BINARY_LIMIT = 2 * 1024 * 1024;
 const OUTPUT_LIMIT = 64 * 1024;
 const MAX_PAGES = 1024; // 64 MiB per module, including the compiler
-const WASI = { badFd: 8, invalid: 28, notFound: 44, notSeekable: 70, denied: 76 };
+const WASI = { badFd: 8, exists: 20, invalid: 28, directory: 31, notFound: 44, notDirectory: 54, notSeekable: 70, denied: 76 };
 
-// c2wasm and its output define their own 32-bit linear memory. Set its maximum
+// xcc and its output define their own 32-bit linear memory. Set its maximum
 // in the module before instantiation so even memory.grow inside a tight loop is bounded.
 function withMemoryCeiling(bytes) {
   let offset = 8;
@@ -78,17 +74,6 @@ function encodeText(value, limit, label) {
   return bytes;
 }
 
-// c2wasm skips system headers and implements getchar/printf directly. Supply the
-// stdio EOF macro on that same directive line, preserving __LINE__ and diagnostics.
-// These edits apply only to compilation; guest project reads retain the original bytes.
-function cSource(bytes) {
-  const source = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
-  const text = decoder.decode(source);
-  const stdio = /^[ \t]*#[ \t]*include[ \t]*<stdio\.h>(?=[ \t]*(?:\/\/|\/\*|\r?$))/gm;
-  const adjusted = text.replace(stdio, '#define EOF -1');
-  return adjusted === text ? source : encoder.encode(adjusted);
-}
-
 function prepareProject({ entry, files, source }, stdinSize) {
   if (typeof entry !== 'string' || canonicalPath(entry) !== entry) throw Error('Invalid entry path.');
   if (!files || typeof files !== 'object' || Array.isArray(files)) throw Error('Invalid project files.');
@@ -106,7 +91,7 @@ function prepareProject({ entry, files, source }, stdinSize) {
     contents.set(name, value);
   }
   contents.set(entry, sourceBytes);
-  return { contents, directory: entry.substring(0, entry.lastIndexOf('/') + 1), sourceBytes };
+  return contents;
 }
 
 class OutputBuffer {
@@ -137,16 +122,88 @@ class OutputBuffer {
   }
 }
 
-function execute(bytes, args, stdin, project, stdout, stderr) {
+// The compiler sees /usr's packaged headers and libraries, the project, and a
+// bounded writable /tmp. The guest gets a fresh instance with only project files.
+class VirtualFiles {
+  constructor(project, sysroot) {
+    this.compiler = sysroot !== undefined;
+    this.files = new Map();
+    this.directories = new Set(['/work']);
+    this.tempCapacity = 0;
+    this.tempFilesCreated = 0;
+    for (const [path, bytes] of project) {
+      // Strip a UTF-8 BOM only in source text passed to the C compiler.
+      const strip = this.compiler && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+      this.mount('/work/' + path, strip ? bytes.subarray(3) : bytes);
+    }
+    this.preopens = new Map([[3, { label: '.', base: '/work' }]]);
+    if (this.compiler) {
+      this.directories.add('/tmp');
+      this.preopens.set(4, { label: '/', base: '' });
+      for (const [path, data] of Object.entries(sysroot)) {
+        if (!path.startsWith('/usr/include/') && !path.startsWith('/usr/lib/')) {
+          throw Error('Invalid packaged C library path.');
+        }
+        this.mount(path, Uint8Array.from(atob(data), c => c.charCodeAt(0)));
+      }
+    }
+  }
+
+  mount(path, bytes) {
+    this.files.set(path, { bytes, size: bytes.length, writable: false });
+    for (let pos = path.indexOf('/', 1); pos !== -1; pos = path.indexOf('/', pos + 1)) {
+      this.directories.add(path.slice(0, pos));
+    }
+  }
+
+  resolve(fd, name) {
+    const mount = this.preopens.get(fd);
+    if (!mount || !name || name.startsWith('/') || /[\\:\x00-\x1f]/.test(name)) return null;
+    if (name === '.') return mount.base || '/';
+    const relative = canonicalPath(name);
+    return relative ? mount.base + '/' + relative : null;
+  }
+
+  create(path) {
+    if (++this.tempFilesCreated > 64) throw Error('Too many compiler temporary files.');
+    const file = { bytes: new Uint8Array(0), size: 0, writable: true };
+    this.files.set(path, file);
+    return file;
+  }
+
+  write(handle, bytes) {
+    const file = handle.file;
+    if (handle.append) handle.pos = file.size;
+    const end = handle.pos + bytes.length;
+    if (end > BINARY_LIMIT) throw Error('Compiler temporary file exceeds 2 MiB.');
+    if (end > file.bytes.length) {
+      const capacity = Math.min(BINARY_LIMIT, Math.max(end, 1024, file.bytes.length * 2));
+      this.tempCapacity += capacity - file.bytes.length;
+      // Charge capacity for the entire run, including files already unlinked.
+      if (this.tempCapacity > 8 * 1024 * 1024) throw Error('Compiler temporary files exceed 8 MiB.');
+      const grown = new Uint8Array(capacity);
+      grown.set(file.bytes.subarray(0, file.size));
+      file.bytes = grown;
+    }
+    if (handle.pos > file.size) file.bytes.fill(0, file.size, handle.pos);
+    file.bytes.set(bytes, handle.pos);
+    file.size = Math.max(file.size, end);
+    handle.pos = end;
+  }
+}
+
+function execute(bytes, args, stdin, fs, stdout, stderr) {
   const exitSignal = {};
-  const handles = new Map([[0, { bytes: stdin, pos: 0 }]]);
+  const handles = new Map([[0, { file: { bytes: stdin, size: stdin.length }, pos: 0, read: true }]]);
   const argv = args.map(arg => encoder.encode(arg + '\0'));
   let memory;
   let exitCode = 0;
-  let nextFd = 4;
+  let nextFd = 5;
   const view = () => new DataView(memory.buffer);
   const slice = (ptr, len) => new Uint8Array(memory.buffer, ptr >>> 0, len >>> 0);
   const write32 = (ptr, value) => view().setUint32(ptr, value, true);
+  const write64 = (ptr, value) => view().setBigUint64(ptr, BigInt(value), true);
+  const pathAt = (fd, ptr, len) => len > 1024 ? null : fs.resolve(fd, decoder.decode(slice(ptr, len)));
 
   function transfer(iovs, count, result, consume) {
     const descriptors = view();
@@ -159,6 +216,14 @@ function execute(bytes, args, stdin, project, stdout, stderr) {
       if (processed < size) break;
     }
     write32(result, total);
+    return 0;
+  }
+
+  function stat(output, type, size) {
+    slice(output, 64).fill(0);
+    view().setUint8(output + 16, type);
+    write64(output + 24, 1);
+    write64(output + 32, size);
     return 0;
   }
 
@@ -182,63 +247,86 @@ function execute(bytes, args, stdin, project, stdout, stderr) {
       return 0;
     },
     fd_write(fd, iovs, count, result) {
-      if (fd !== 1 && fd !== 2) return WASI.badFd;
-      const output = fd === 1 ? stdout : stderr;
+      const handle = handles.get(fd);
+      if (fd !== 1 && fd !== 2 && !handle?.write) return WASI.badFd;
       return transfer(iovs, count, result, bytes => {
-        output.append(bytes);
+        if (fd === 1 || fd === 2) (fd === 1 ? stdout : stderr).append(bytes);
+        else fs.write(handle, bytes);
         return bytes.length;
       });
     },
     fd_read(fd, iovs, count, result) {
       const handle = handles.get(fd);
-      if (!handle) return WASI.badFd;
+      if (!handle?.read) return WASI.badFd;
       return transfer(iovs, count, result, target => {
-        const chunk = handle.bytes.subarray(handle.pos, handle.pos + target.length);
+        const file = handle.file;
+        const chunk = file.bytes.subarray(handle.pos, Math.min(file.size, handle.pos + target.length));
         target.set(chunk);
         handle.pos += chunk.length;
         return chunk.length;
       });
     },
     fd_close(fd) { return handles.delete(fd) ? 0 : WASI.badFd; },
-    fd_seek() { return WASI.notSeekable; },
-    fd_fdstat_set_flags(fd, flags) { return flags === 0 ? 0 : WASI.denied; },
-    fd_fdstat_get(fd, output) {
-      if (fd > 3 && !handles.has(fd)) return WASI.badFd;
-      slice(output, 24).fill(0);
-      const type = fd === 3 ? 3 : fd <= 2 ? 2 : 4;
-      view().setUint8(output, type);
-      // A read-only preopen. libc consults these rights when resolving fopen(..., "r").
-      const read = 2n, write = 64n, openPath = 8192n;
-      view().setBigUint64(output + 8, fd === 3 ? openPath : fd === 1 || fd === 2 ? write : read, true);
-      if (fd === 3) view().setBigUint64(output + 16, read, true);
+    fd_seek(fd, offset, whence, output) {
+      if (fd < 3) return WASI.notSeekable;
+      const handle = handles.get(fd);
+      if (!handle) return WASI.badFd;
+      const start = [0, handle.pos, handle.file.size][whence];
+      const position = start + Number(offset);
+      if (start === undefined || !Number.isSafeInteger(position) || position < 0) return WASI.invalid;
+      handle.pos = position;
+      write64(output, position);
       return 0;
     },
+    fd_filestat_get(fd, output) {
+      if (fd >= 0 && fd < 3) return stat(output, 2, 0);
+      if (fs.preopens.has(fd)) return stat(output, 3, 0);
+      const handle = handles.get(fd);
+      return handle ? stat(output, 4, handle.file.size) : WASI.badFd;
+    },
     fd_prestat_get(fd, output) {
-      if (fd !== 3) return WASI.badFd;
+      const mount = fs.preopens.get(fd);
+      if (!mount) return WASI.badFd;
       slice(output, 8).fill(0);
-      write32(output + 4, 1);
+      write32(output + 4, mount.label.length);
       return 0;
     },
     fd_prestat_dir_name(fd, output, len) {
-      if (fd !== 3 || len < 1) return WASI.badFd;
-      slice(output, 1)[0] = 46;
+      const mount = fs.preopens.get(fd);
+      if (!mount || len < mount.label.length) return WASI.badFd;
+      slice(output, mount.label.length).set(encoder.encode(mount.label));
       return 0;
     },
+    path_filestat_get(fd, _flags, ptr, len, output) {
+      const path = pathAt(fd, ptr, len);
+      if (path === null) return WASI.denied;
+      if (fs.directories.has(path)) return stat(output, 3, 0);
+      const file = fs.files.get(path);
+      return file ? stat(output, 4, file.size) : WASI.notFound;
+    },
+    path_unlink_file(fd, ptr, len) {
+      const path = pathAt(fd, ptr, len);
+      if (!fs.compiler || !path?.startsWith('/tmp/')) return WASI.denied;
+      return fs.files.delete(path) ? 0 : WASI.notFound;
+    },
     path_open(fd, _flags, ptr, len, openFlags, rights, _inherited, fdFlags, output) {
-      if (fd !== 3) return WASI.badFd;
-      if (openFlags || fdFlags || (rights & 64n)) return WASI.denied;
-      if (len > 1024) return WASI.invalid;
-      const name = decoder.decode(slice(ptr, len));
-      if (name.startsWith('/') || name.includes('\\') || name.includes(':')) return WASI.denied;
-      const nearEntry = canonicalPath(project.directory + name);
-      const fromRoot = canonicalPath(name);
-      const file = project.contents.get(nearEntry) ?? project.contents.get(fromRoot);
-      if (!file) return WASI.notFound;
-      // c2wasm's C preprocessor treats an embedded NUL in a quoted include as EOF.
-      if (args[1] === '-b' && file.includes(0)) throw Error('C include contains a null byte.');
-      if (handles.size >= 128) return 33; // ENFILE
+      const path = pathAt(fd, ptr, len);
+      if (path === null) return WASI.denied;
+      if (fs.directories.has(path)) return WASI.directory;
+      if (openFlags & 2) return WASI.notDirectory;
+      const write = Boolean(rights & 64n);
+      const creating = Boolean(openFlags & 1);
+      if ((write || creating || (openFlags & 8) || (fdFlags & 1)) &&
+          !(fs.compiler && path.startsWith('/tmp/'))) return WASI.denied;
+      let file = fs.files.get(path);
+      if (!file && !creating) return WASI.notFound;
+      if (file && creating && (openFlags & 4)) return WASI.exists;
+      if (!file && !fs.directories.has(path.slice(0, path.lastIndexOf('/')))) return WASI.notFound;
+      if (!file) file = fs.create(path);
+      if (openFlags & 8) file.size = 0;
+      if (handles.size >= 128) throw Error('Too many open files.');
       const number = nextFd++;
-      handles.set(number, { bytes: args[1] === '-b' ? cSource(file) : file, pos: 0 });
+      handles.set(number, { file, pos: 0, append: Boolean(fdFlags & 1), read: Boolean(rights & 2n), write });
       write32(output, number);
       return 0;
     },
@@ -254,7 +342,7 @@ function execute(bytes, args, stdin, project, stdout, stderr) {
   for (const imported of WebAssembly.Module.imports(module)) {
     if (imported.module !== 'wasi_snapshot_preview1' || imported.kind !== 'function' ||
         !Object.prototype.hasOwnProperty.call(wasi, imported.name)) {
-      throw Error('Unsupported Wasm import: ' + imported.name);
+      throw Error('This local runtime does not provide ' + imported.name + '. Edit the source before rerunning.');
     }
   }
   const instance = new WebAssembly.Instance(module, { wasi_snapshot_preview1: wasi });
@@ -270,35 +358,33 @@ function execute(bytes, args, stdin, project, stdout, stderr) {
 function report(request) {
   let phase = 'compile';
   let failureCode = 1;
-  let stdout = new OutputBuffer(BINARY_LIMIT);
+  let stdout = new OutputBuffer(OUTPUT_LIMIT);
   let stderr = new OutputBuffer(OUTPUT_LIMIT);
   try {
     const stdin = encodeText(request.stdin, FILE_LIMIT, 'Standard input');
     const project = prepareProject(request, stdin.length);
     const compiler = new Uint8Array(request.compiler);
-    if (compiler.length > BINARY_LIMIT) throw Error('Packaged compiler exceeds the byte limit.');
-    const compileExit = execute(compiler, ['c2wasm', '-b'], cSource(project.sourceBytes), project, stdout, stderr);
-    if (compileExit !== 0) {
-      // Upstream writes syntax diagnostics to stdout even in binary mode.
-      const diagnostic = decoder.decode(stdout.bytes().subarray(0, OUTPUT_LIMIT));
-      return { phase, exit_code: compileExit, stdout: '', stderr: (stderr.text() + diagnostic).slice(0, OUTPUT_LIMIT) };
-    }
-    const program = stdout.bytes();
+    if (compiler.length > BINARY_LIMIT || !request.sysroot) throw Error('Invalid packaged C toolchain.');
+    const fs = new VirtualFiles(project, request.sysroot);
+    const destination = '/tmp/orb-program.wasm';
+    const args = ['/usr/bin/cc', '-I/work', '-o', destination, '/work/' + request.entry];
+    const compileExit = execute(compiler, args, new Uint8Array(0), fs, stdout, stderr);
+    if (compileExit !== 0) return { phase, exit_code: compileExit, stdout: stdout.text(), stderr: stderr.text() };
+    const output = fs.files.get(destination);
+    if (!output) throw Error('Compiler did not produce a Wasm program.');
+    const program = output.bytes.subarray(0, output.size);
     if (!WebAssembly.validate(program)) throw Error('Compiler produced invalid WebAssembly.');
-    const warnings = stderr.text();
     phase = 'run';
     stdout = new OutputBuffer(OUTPUT_LIMIT);
     stderr = new OutputBuffer(OUTPUT_LIMIT);
-    stderr.append(encoder.encode(warnings));
     self.postMessage({ started: 'run' });
-    const exit = execute(program, [request.entry], stdin, project, stdout, stderr);
+    const exit = execute(program, [request.entry], stdin, new VirtualFiles(project), stdout, stderr);
     failureCode = exit || 1;
     return { phase, exit_code: exit, stdout: stdout.outputText('stdout'), stderr: stderr.outputText('stderr') };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const diagnostic = stderr.text().slice(0, OUTPUT_LIMIT - 1024);
-    return { phase, exit_code: failureCode, stdout: phase === 'run' ? stdout.text() : '', stderr: diagnostic + (diagnostic ? '\n' : '') + message.slice(0, 1024) };
+    return { phase, exit_code: failureCode, stdout: stdout.text(), stderr: diagnostic + (diagnostic ? '\n' : '') + message.slice(0, 1024) };
   }
 }
-
 self.onmessage = event => self.postMessage(report(event.data));

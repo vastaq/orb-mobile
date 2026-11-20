@@ -8,6 +8,7 @@ import 'models.dart';
 const _channel = MethodChannel('studio.orb/workspace-program');
 final _available = _checkAvailability();
 final _compiler = _assetBase64('compiler.wasm');
+final _sysroot = _assetBase64('sysroot.json');
 final _worker = _assetBase64('worker.js');
 int _nextRun = 0;
 
@@ -110,9 +111,10 @@ Future<Map<String, dynamic>> runWorkspaceProgram({
     };
     worker.onerror = event => failure(1, event.message || '无法启动编译执行环境。');
     const compiler = bytes('${await _compiler}');
+    const sysroot = JSON.parse(new TextDecoder().decode(bytes('${await _sysroot}')));
     const request = JSON.parse(new TextDecoder().decode(bytes('$input')));
     startTimer();
-    worker.postMessage({...request, compiler}, [compiler.buffer]);
+    worker.postMessage({...request, compiler, sysroot}, [compiler.buffer]);
   } catch (error) { failure(1, String(error)); }
 })();
 </script>''';
