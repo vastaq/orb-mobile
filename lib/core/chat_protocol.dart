@@ -6,7 +6,7 @@ import 'tool_types.dart';
 class ChatOptions {
   const ChatOptions({
     this.thinking = false,
-    this.search = false,
+    this.search = true,
     this.readLinks = true,
     this.region,
     this.language = 'zh-CN',
@@ -103,7 +103,8 @@ Map<String, String> _claudeSource(String url, {bool document = false}) {
   };
 }
 
-ChatMessage _message(ModelService service, ChatMessage message) {
+ChatMessage _message(ModelConfig config, ChatMessage message) {
+  final service = config.service;
   final role = message['role'];
   final content = message['content'];
   return {
@@ -116,9 +117,11 @@ ChatMessage _message(ModelService service, ChatMessage message) {
         : content,
     if (service == ModelService.deepSeek && role == 'assistant')
       for (final key in [
-        'server_tool_calls',
         'reasoning_content',
-        'annotations',
+        if (config.supportsDeepSeekTools) ...[
+          'server_tool_calls',
+          'annotations',
+        ],
       ])
         if (message[key] != null) key: message[key],
   };
@@ -155,7 +158,7 @@ Map<String, Object?> buildWireRequest(
   ChatOptions options,
 ) {
   final service = config.service;
-  final messages = [for (final m in history) _message(service, m)];
+  final messages = [for (final m in history) _message(config, m)];
   final base = <String, Object?>{'model': config.model.trim(), 'stream': true};
   final functions = <Map<String, dynamic>>[];
   for (final tool in options.tools) {
@@ -199,9 +202,6 @@ Map<String, Object?> buildWireRequest(
       return {...base, 'messages': messages};
     case ModelService.deepSeek:
       if (!config.supportsDeepSeekTools) {
-        if (options.search) {
-          throw const OrbException('联网搜索需要选择 deepseek-flash 模型。');
-        }
         if (messages.any(
           (m) =>
               m['content'] is List &&

@@ -80,7 +80,7 @@ Future<OrbAttachment> pickedAttachment(
   File file,
   String name,
   ModelConfig config, {
-  String purpose = 'text_recognition',
+  String? purpose,
   bool image = false,
 }) async {
   final ext = name.split('.').last.toLowerCase();
@@ -169,10 +169,15 @@ Future<OrbAttachment> pickedAttachment(
   final userData = {'xls', 'xlsx', 'epub', 'mobi'}.contains(ext);
   final max = config.service == ModelService.deepSeek && !userData ? 100 : 32;
   if (size > max * 1024 * 1024) throw OrbException('文件超过 $max MiB，请选择较小的文件。');
+  final presentation =
+      config.supportsDeepSeekTools && {'ppt', 'pptx'}.contains(ext);
+  final parsePurpose =
+      purpose ??
+      (presentation ? 'rich_layout_recognition' : 'text_recognition');
   return OrbAttachment(
     name: name,
     mime: mime,
     localPath: file.path,
-    purpose: userData ? 'user_data' : purpose,
+    purpose: userData ? 'user_data' : parsePurpose,
   );
 }

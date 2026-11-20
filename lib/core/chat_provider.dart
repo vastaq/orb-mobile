@@ -66,7 +66,7 @@ class StreamingChatProvider implements RichChatProvider {
   ) => replyRich(
     config,
     messages,
-    const ChatOptions(readLinks: false),
+    const ChatOptions(search: false, readLinks: false),
   ).where((delta) => delta.text.isNotEmpty).map((delta) => delta.text);
 
   @override

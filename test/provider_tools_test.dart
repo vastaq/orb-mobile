@@ -178,9 +178,13 @@ void main() {
             'parameters': tool.parameters,
           },
         });
-        if (service == ModelService.deepSeek) {
-          expect(definitions.last, {'type': 'deepseek_read_url'});
-        }
+        expect(definitions.skip(1), [
+          if (service == ModelService.deepSeek) ...[
+            {'type': 'deepseek_web_search'},
+            {'type': 'deepseek_read_url'},
+          ],
+        ]);
+        expect(requests.first.containsKey('tool_choice'), isFalse);
         final messages = requests.last['messages'] as List;
         expect(messages[messages.length - 2]['tool_calls'], [
           {

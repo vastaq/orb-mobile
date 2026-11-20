@@ -81,6 +81,28 @@ void main() {
     },
   );
 
+  test(
+    'web tools default on and remember independent opt-outs after reopening',
+    () async {
+      final storage = _RetryStore();
+      final orb = OrbController(store: storage);
+      addTearDown(orb.dispose);
+      await orb.initialize();
+      expect(orb.search, isTrue);
+      expect(orb.readLinks, isTrue);
+      expect(orb.thinking, isFalse);
+
+      await orb.setChatOptions(web: false);
+      await orb.initialize();
+      expect(orb.search, isFalse);
+      expect(orb.readLinks, isTrue);
+      await orb.setChatOptions(web: true, links: false);
+      await orb.initialize();
+      expect(orb.search, isTrue);
+      expect(orb.readLinks, isFalse);
+    },
+  );
+
   group('streaming completions', () {
     late HttpServer server;
     late ModelConfig config;
@@ -209,13 +231,18 @@ void main() {
 class _RetryStore extends Fake implements OrbStore {
   final saved = <String>[];
   final retryFlags = <bool>[];
+  final preferences = {'auto_memory': '0'};
   @override
   Future<void> open() async {}
   @override
   Future<Map<String, ModelConfig>> loadProfiles() async => {};
   @override
-  Future<String?> preference(String key) async =>
-      key == 'auto_memory' ? '0' : null;
+  Future<String?> preference(String key) async => preferences[key];
+  @override
+  Future<void> setPreference(String name, String value) async {
+    preferences[name] = value;
+  }
+
   @override
   Future<void> saveMetadata(int id, Map<String, dynamic> data) async {}
   @override

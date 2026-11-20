@@ -35,9 +35,10 @@ void main() {
     );
     tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
     await tester.pumpAndSettle();
-    for (final label in ['今天', '昨天', '更早', '读书清单', '定时任务', '设置']) {
+    for (final label in ['今天', '昨天', '更早', '读书清单', '设置']) {
       expect(find.text(label), findsOneWidget);
     }
+    expect(find.text('定时任务'), findsNothing);
     await tester.tap(find.byTooltip('搜索对话'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '散步');
