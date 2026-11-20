@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
 import 'package:sqflite/sqflite.dart';
@@ -192,16 +193,24 @@ class Workspace {
     ),
     _tool(
       'workspace_read',
-      'Read a UTF-8 file in the Orb workspace. Returns exact content, SHA-256 and next offset. Offsets count Unicode code points.',
+      'Read exact file text and its sha256. Use start_line (1-based) and '
+          'line_count (default 40) for context around a search hit. Alternatively '
+          'use offset (Unicode code points, default 0). Follow next_offset to '
+          'continue after the returned text, including in a long line.',
       {
         'path': _string,
-        'offset': {'type': 'integer'},
+        'offset': {'type': 'integer', 'minimum': 0},
+        'start_line': {'type': 'integer', 'minimum': 1},
+        'line_count': {'type': 'integer', 'minimum': 1, 'maximum': 200},
       },
       ['path'],
     ),
     _tool(
       'workspace_search',
-      'Find literal text in workspace file paths and contents. Returns matched lines.',
+      'Find literal text in paths and file contents. Results include 1-based '
+          'line numbers and exact excerpts around matches. Use file_hashes[path] '
+          'as expected_hash to edit a unique match, or read nearby lines for context. '
+          'Search offset paginates matches.',
       {
         'query': _string,
         'prefix': _string,
@@ -211,13 +220,16 @@ class Workspace {
     ),
     _tool(
       'workspace_write',
-      'Create a text file, or overwrite one the user asked to change. First read an existing file and provide its sha256 as expected_hash.',
+      'Create a text file, or overwrite one the user asked to change. Read the '
+          'entire existing file with workspace_read first and provide its sha256 as expected_hash.',
       {'path': _string, 'text': _string, 'expected_hash': _string},
       ['path', 'text'],
     ),
     _tool(
       'workspace_edit',
-      'Replace one unique exact text occurrence in a workspace file. Read first; provide expected_hash from that read.',
+      'Replace one unique exact occurrence. Provide the file sha256 from '
+          'workspace_read or file_hashes[path] from workspace_search as expected_hash. '
+          'Read surrounding lines to disambiguate repeated text.',
       {
         'path': _string,
         'old_text': _string,
@@ -227,6 +239,98 @@ class Workspace {
       ['path', 'old_text', 'new_text', 'expected_hash'],
     ),
   ];
+
+  static String _matchExcerpt(String line, Match match) {
+    const width = 200;
+    if (line.length <= width) return line;
+    final runes = line.runes.toList();
+    if (runes.length <= width) return line;
+    final before = line.substring(0, match.start).runes.length;
+    final matched = match.group(0)!.runes.length;
+    final margin = math.max(0, (width - matched) ~/ 2);
+    final start = (before - margin).clamp(0, runes.length - width);
+    return String.fromCharCodes(runes, start, start + width);
+  }
+
+  static Map<String, dynamic> _readPage(
+    WorkFile file,
+    Map<String, dynamic> arguments,
+    int offset,
+  ) {
+    const limit = 8000;
+    var startOffset = offset;
+    Iterable<int> content = file.text.runes.skip(offset);
+    int? firstLine, nextLine;
+    if (arguments['start_line'] != null || arguments['line_count'] != null) {
+      if (arguments['offset'] != null) {
+        throw const OrbException('请单独使用 offset 或按行读取。');
+      }
+      final first = arguments['start_line'] ?? 1;
+      final count = arguments['line_count'] ?? 40;
+      if (first is! int ||
+          first < 1 ||
+          count is! int ||
+          count < 1 ||
+          count > 200) {
+        throw const OrbException(
+          'start_line 必须是从 1 开始的整数，line_count 必须为 1 至 200 的整数。',
+        );
+      }
+      firstLine = first;
+      var start = 0;
+      for (var line = 1; line < first; line++) {
+        final newline = file.text.indexOf('\n', start);
+        if (newline < 0) {
+          throw OrbException('start_line 超出文件范围，最后一行是第 $line 行。');
+        }
+        start = newline + 1;
+      }
+      var end = start;
+      for (var i = 0; i < count && end < file.text.length; i++) {
+        final newline = file.text.indexOf('\n', end);
+        end = newline < 0 ? file.text.length : newline + 1;
+      }
+      content = file.text.substring(start, end).runes;
+      startOffset = file.text.substring(0, start).runes.length;
+      if (end < file.text.length) nextLine = first + count;
+    }
+    final page = content.take(limit + 1).toList();
+    final length = math.min(page.length, limit);
+    return {
+      'path': file.path,
+      'sha256': file.hash,
+      'text': String.fromCharCodes(page, 0, length),
+      'start_line': ?firstLine,
+      if (page.length > limit || nextLine != null)
+        'next_offset': startOffset + length,
+      if (page.length <= limit && nextLine != null) 'next_line': nextLine,
+    };
+  }
+
+  static String _replaceUnique(String text, String old, String replacement) {
+    if (old.isEmpty) throw const OrbException('old_text 不能为空。');
+    final first = text.indexOf(old);
+    if (first < 0) {
+      throw const OrbException('文件中找不到完全一致的 old_text。请搜索或读取当前原文再编辑。');
+    }
+    final second = text.indexOf(old, first + 1);
+    if (second >= 0) {
+      final third = text.indexOf(old, second + 1);
+      final positions = [first, second, if (third >= 0) third];
+      final lines = positions
+          .map(
+            (position) =>
+                1 + '\n'.allMatches(text.substring(0, position)).length,
+          )
+          .toSet()
+          .join('、');
+      throw OrbException(
+        'old_text 在第 $lines 行等位置多次出现。请用 workspace_read 读取附近几行，把唯一的上下文一起替换。',
+      );
+    }
+    return text.replaceRange(first, first + old.length, replacement);
+  }
+
   Future<Map<String, dynamic>> run(ChatToolCall call) async {
     final a = call.arguments;
     String arg(String key) {
@@ -255,57 +359,51 @@ class Workspace {
             prefix = a['prefix'] as String? ?? '';
         if (query.isEmpty) throw const OrbException('请输入要查找的文字。');
         final hits = <Map<String, dynamic>>[];
+        final hashes = <String, String>{};
+        final literal = RegExp(
+          RegExp.escape(query),
+          caseSensitive: false,
+          unicode: true,
+        );
         var skipped = 0;
         for (final row in await db.rawQuery(
-          'SELECT path,body FROM files WHERE instr(path,?)=1 AND (instr(lower(path),?)>0 OR instr(lower(body),?)>0) ORDER BY path',
+          'SELECT path,body,hash FROM files WHERE instr(path,?)=1 AND (instr(lower(path),?)>0 OR instr(lower(body),?)>0) ORDER BY path',
           [prefix, query, query],
         )) {
           final path = row['path'] as String,
               lines = (row['body'] as String).split('\n');
-          final positions = [
-            if (path.toLowerCase().contains(query)) -1,
-            for (var i = 0; i < lines.length; i++)
-              if (lines[i].toLowerCase().contains(query)) i,
-          ];
-          for (final i in positions) {
+          for (var i = -1; i < lines.length; i++) {
+            final match = literal.firstMatch(i < 0 ? path : lines[i]);
+            if (match == null) continue;
             if (skipped++ < offset) continue;
             if (hits.length == 30) {
-              return {'matches': hits, 'next_offset': offset + 30};
+              return {
+                'matches': hits,
+                'file_hashes': hashes,
+                'next_offset': offset + 30,
+              };
             }
+            hashes[path] = row['hash'] as String;
             hits.add({
               'path': path,
               if (i >= 0) 'line': i + 1,
-              if (i >= 0)
-                'text': String.fromCharCodes(lines[i].runes.take(200)),
+              if (i >= 0) 'text': _matchExcerpt(lines[i], match),
             });
           }
         }
-        return {'matches': hits};
+        return {'matches': hits, 'file_hashes': hashes};
       case 'workspace_read':
         final file = await read(arg('path'));
         if (file == null) throw const OrbException('找不到工作文件。');
-        final slice = file.text.runes.skip(offset).take(8001).toList();
-        return {
-          'path': file.path,
-          'sha256': file.hash,
-          'text': String.fromCharCodes(slice.take(8000)),
-          if (slice.length > 8000) 'next_offset': offset + 8000,
-        };
+        return _readPage(file, a, offset);
       case 'workspace_write':
       case 'workspace_edit':
         final path = workspacePath(arg('path'));
         late final String body;
         if (call.name == 'workspace_edit') {
-          final f = await read(path),
-              old = arg('old_text'),
-              replacement = arg('new_text');
-          if (f == null ||
-              old.isEmpty ||
-              !f.text.contains(old) ||
-              f.text.indexOf(old) != f.text.lastIndexOf(old)) {
-            throw const OrbException('待替换片段需在文件中唯一出现。');
-          }
-          body = f.text.replaceFirst(old, replacement);
+          final file = await read(path);
+          if (file == null) throw OrbException('找不到工作文件 $path，请先查找正确的路径。');
+          body = _replaceUnique(file.text, arg('old_text'), arg('new_text'));
         } else {
           body = arg('text');
         }

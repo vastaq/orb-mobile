@@ -16,23 +16,24 @@ const _port = int.fromEnvironment('ORB_LIVE_PROGRAM_PORT');
 
 // Keep the production service selection, wire format and streaming parser.
 // Route only the completed request URL to the local test proxy.
-class _RelayedConfig extends ModelConfig {
-  _RelayedConfig(String baseUrl)
-    : super(baseUrl: baseUrl, model: _model, apiKey: 'orb-test-placeholder');
+class RelayedLiveConfig extends ModelConfig {
+  RelayedLiveConfig(String baseUrl, String model, this.port)
+    : super(baseUrl: baseUrl, model: model, apiKey: 'orb-test-placeholder');
+  final int port;
 
   @override
   Uri get endpoint => Uri(
     scheme: 'http',
     host: '127.0.0.1',
-    port: _port,
+    port: port,
     path: super.endpoint.path,
   );
 }
 
 // Keep chat history and tool receipts on the normal database. Supply only
 // test configuration and context, without opening active provider credentials.
-class _LiveTestStore extends OrbStore {
-  _LiveTestStore(this.config);
+class LiveTestStore extends OrbStore {
+  LiveTestStore(this.config);
   final ModelConfig config;
 
   @override
@@ -67,8 +68,8 @@ void main() {
         inInclusiveRange(1, 65535),
         reason: 'Set ORB_LIVE_PROGRAM_PORT.',
       );
-      final config = _RelayedConfig(preset.baseUrl);
-      final orb = OrbController(store: _LiveTestStore(config));
+      final config = RelayedLiveConfig(preset.baseUrl, _model, _port);
+      final orb = OrbController(store: LiveTestStore(config));
       await tester.pumpWidget(OrbApp(controller: orb));
 
       Future<void> waitFor(bool Function() done, Duration timeout) async {

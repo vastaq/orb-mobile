@@ -7,6 +7,7 @@ import 'rich_chat_test.dart' as rich;
 import 'schedule_tools_test.dart' as scheduling;
 import 'harness_flow_test.dart' as harness;
 import 'workspace_program_test.dart' as program;
+import 'workspace_navigation_test.dart' as navigation;
 
 void main() {
   group('chat_flow', chat.main);
@@ -16,4 +17,5 @@ void main() {
   group('schedule_tools', scheduling.main);
   group('harness_flow', harness.main);
   group('workspace_program', program.main);
+  group('workspace_navigation', navigation.main);
 }
