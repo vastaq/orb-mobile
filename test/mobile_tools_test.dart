@@ -20,6 +20,18 @@ void main() {
     );
     expect(attach.purpose, 'rich_layout_recognition');
     expect(attach.localPath, doc.path);
+    expect(
+      (await pickedAttachment(
+        doc,
+        'slides.PPTX',
+        ModelConfig.deepSeek,
+      )).purpose,
+      'rich_layout_recognition',
+    );
+    expect(
+      (await pickedAttachment(doc, 'report.pdf', ModelConfig.deepSeek)).purpose,
+      'text_recognition',
+    );
     final csv = await File('${temp.path}/notes.csv')
         .writeAsString('日期,记录\n周二,晴');
     expect(
@@ -84,7 +96,13 @@ void main() {
       );
       await t.tap(find.text('open'));
       await t.pumpAndSettle();
-      expect(find.text('DeepSeek 工具'), findsNothing);
+      for (final label in ['照片', '拍照', '文件', '更多输入']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.text('提示模板'), findsNothing);
+      await t.tap(find.text('更多输入'));
+      await t.pumpAndSettle();
+      expect(find.text('从文件或网页插入'), findsNothing);
       await t.tap(find.text('快捷指令'));
       await t.pumpAndSettle();
       await t.ensureVisible(find.text('插入当前时间'));

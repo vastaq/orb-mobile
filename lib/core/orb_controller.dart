@@ -29,7 +29,7 @@ class OrbController extends ChangeNotifier {
   final ChatProvider _provider;
   final MemoryHarness _memory;
   bool autoMemoryEnabled = true;
-  bool thinking = false, search = false, readLinks = true;
+  bool thinking = false, search = true, readLinks = true;
   String? region;
   String language = 'zh-CN';
   PromptSettings prompts = const PromptSettings();
@@ -164,7 +164,7 @@ class OrbController extends ChangeNotifier {
       prompts = await loadPromptSettings(_store);
       autoMemoryEnabled = await _store.preference('auto_memory') != '0';
       thinking = await _store.preference('thinking') == '1';
-      search = await _store.preference('search') == '1';
+      search = await _store.preference('search') != '0';
       readLinks = await _store.preference('read_links') != '0';
       region = await _store.preference('region');
       language = await _store.preference('language') ?? 'zh-CN';

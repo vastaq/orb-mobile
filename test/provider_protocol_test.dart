@@ -307,7 +307,6 @@ void main() {
       ],
       const ChatOptions(
         thinking: true,
-        search: true,
         region: '上海',
         language: 'en-US',
         suggestTitle: true,
@@ -330,10 +329,55 @@ void main() {
         ...meta['native'] as Map<String, dynamic>,
       },
       {'role': 'user', 'content': 'Continue'},
-    ], const ChatOptions(readLinks: false)).toList();
+    ], const ChatOptions(search: false, readLinks: false)).toList();
     expect(second.first.text, 'Follow-up');
     expect(requests, 2);
   });
+
+  test('older DeepSeek models can continue a Flash conversation without its web tools or signed web history', () async {
+    final config = _LocalCapture(
+      const ModelConfig(model: 'deepseek-chat'),
+      server.port,
+    );
+    server.listen((req) async {
+      final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map;
+      expect(body['tools'], isNull);
+      expect(body['messages'], [
+        {'role': 'assistant', 'content': '之前的回复'},
+        {'role': 'user', 'content': '继续'},
+      ]);
+      req.response.write(_chunk({'content': '好'}, finish: 'stop'));
+      await req.response.close();
+    });
+    final result = await provider.replyRich(config, [
+      {
+        'role': 'assistant',
+        'content': '之前的回复',
+        'annotations': [
+          {'type': 'url_citation'},
+        ],
+        'server_tool_calls': [
+          {'signature': 'flash-only'},
+        ],
+      },
+      {'role': 'user', 'content': '继续'},
+    ], const ChatOptions()).toList();
+    expect(result.first.text, '好');
+  });
+
+  test(
+    'plain auxiliary requests omit both web tools on DeepSeek Flash',
+    () async {
+      server.listen((req) async {
+        final body = jsonDecode(await utf8.decoder.bind(req).join()) as Map;
+        expect(body['tools'], isNull);
+        req.response.write(_chunk({'content': 'OK'}, finish: 'stop'));
+        await req.response.close();
+      });
+      final config = _LocalCapture(ModelConfig.deepSeek, server.port);
+      expect(await provider.reply(config, messages).join(), 'OK');
+    },
+  );
 
   test('OpenAI and Claude incomplete, failed and abruptly ended streams preserve partial text', () async {
     final cases = [

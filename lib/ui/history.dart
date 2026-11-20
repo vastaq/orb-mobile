@@ -7,7 +7,6 @@ import 'dart:math' as math;
 
 import 'settings_home.dart';
 import 'orb_mark.dart';
-import 'tasks.dart';
 
 class HistoryDrawer extends StatefulWidget {
   const HistoryDrawer({
@@ -341,10 +340,6 @@ class _HistoryDrawerState extends State<HistoryDrawer> {
               child: Divider(height: 1, color: Color(0xff343630)),
             ),
             const SizedBox(height: 7),
-            footer(Glyph.clock, '定时任务', () {
-              nav.pop();
-              openOrbTasks(page, orb);
-            }),
             footer(Glyph.settings, '设置', () {
               nav.pop();
               openOrbSettings(page, orb);

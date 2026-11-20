@@ -112,6 +112,8 @@ class _ModelSettingsState extends State<_ModelSettings> {
   final _key = TextEditingController();
   final _drafts = <String, ModelConfig>{};
   late String _provider;
+  late bool _thinking, _search, _readLinks;
+  late String _region, _language;
   String? _keyOrigin;
   bool _hidden = true;
   bool _saving = false;
@@ -122,7 +124,13 @@ class _ModelSettingsState extends State<_ModelSettings> {
   @override
   void initState() {
     super.initState();
-    final active = widget.controller.config;
+    final controller = widget.controller;
+    _thinking = controller.thinking;
+    _search = controller.search;
+    _readLinks = controller.readLinks;
+    _region = controller.region ?? '';
+    _language = controller.language;
+    final active = controller.config;
     final base = active.baseUrl.replaceFirst(RegExp(r'/+$'), '');
     _provider =
         _presets.entries
@@ -184,7 +192,7 @@ class _ModelSettingsState extends State<_ModelSettings> {
     final origin = _origin(text);
     if (origin != _keyOrigin) _key.clear();
     _keyOrigin = origin;
-    _changed(text);
+    setState(() => _error = null);
   }
 
   void _switch(String provider) {
@@ -213,7 +221,21 @@ class _ModelSettingsState extends State<_ModelSettings> {
       _error = null;
     });
     try {
-      await widget.controller.saveConfig(config);
+      final c = widget.controller;
+      await c.saveConfig(config);
+      if (config.service == ModelService.deepSeek) {
+        final flash = config.supportsDeepSeekTools;
+        final language = _language.trim().isEmpty ? 'zh-CN' : _language.trim();
+        await c.setChatOptions(
+          deepThinking: _thinking == c.thinking ? null : _thinking,
+          web: flash && _search != c.search ? _search : null,
+          links: flash && _readLinks != c.readLinks ? _readLinks : null,
+          userRegion: flash && _region.trim() != (c.region ?? '')
+              ? _region.trim()
+              : null,
+          userLanguage: flash && language != c.language ? language : null,
+        );
+      }
       if (mounted) Navigator.of(context).pop(true);
     } catch (_) {
       if (mounted) {
@@ -227,6 +249,7 @@ class _ModelSettingsState extends State<_ModelSettings> {
 
   @override
   Widget build(BuildContext context) {
+    final draft = _readDraft();
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: _bar('模型连接', action: _saveButton(_saving ? null : _save)),
@@ -287,7 +310,7 @@ class _ModelSettingsState extends State<_ModelSettings> {
               autocorrect: false,
               enableSuggestions: false,
               textInputAction: TextInputAction.next,
-              onChanged: _changed,
+              onChanged: (_) => setState(() => _error = null),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -320,6 +343,52 @@ class _ModelSettingsState extends State<_ModelSettings> {
                   ? '填写兼容 Chat Completions 的服务地址和模型 ID。免鉴权服务可以留空密钥。'
                   : '可以先保存服务，发送前再填写 API 密钥。用量按你的开发者账户计费。',
             ),
+            if (draft.service == ModelService.deepSeek) ...[
+              const SizedBox(height: 12),
+              ExpansionTile(
+                title: const Text('对话选项'),
+                tilePadding: EdgeInsets.zero,
+                children: [
+                  SwitchListTile(
+                    title: const Text('深度思考'),
+                    value: _thinking,
+                    onChanged: _saving
+                        ? null
+                        : (v) => setState(() => _thinking = v),
+                  ),
+                  if (draft.supportsDeepSeekTools) ...[
+                    SwitchListTile(
+                      title: const Text('按需联网搜索'),
+                      value: _search,
+                      onChanged: _saving
+                          ? null
+                          : (v) => setState(() => _search = v),
+                    ),
+                    SwitchListTile(
+                      title: const Text('读取消息中的链接'),
+                      value: _readLinks,
+                      onChanged: _saving
+                          ? null
+                          : (v) => setState(() => _readLinks = v),
+                    ),
+                    TextFormField(
+                      initialValue: _region,
+                      maxLength: 80,
+                      decoration: _field('地区（可选）', hint: '例如：中国上海'),
+                      enabled: !_saving,
+                      onChanged: (v) => _region = v,
+                    ),
+                    TextFormField(
+                      initialValue: _language,
+                      maxLength: 35,
+                      decoration: _field('语言', hint: 'zh-CN'),
+                      enabled: !_saving,
+                      onChanged: (v) => _language = v,
+                    ),
+                  ],
+                ],
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 16),
               _note(_error!, error: true),

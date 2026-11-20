@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/orb_controller.dart';
 import 'assets.dart';
 import 'skills.dart';
+import 'tasks.dart';
 import 'workspace.dart';
 import 'mcp_connections.dart';
 import 'usage.dart';
@@ -55,6 +56,11 @@ class _Settings extends StatelessWidget {
               context,
               MaterialPageRoute<void>(builder: (_) => const SkillManagerPage()),
             ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.schedule_outlined),
+            title: const Text('定时任务'),
+            onTap: () => openOrbTasks(context, c),
           ),
           ListTile(
             leading: const Icon(Icons.folder_open_outlined),

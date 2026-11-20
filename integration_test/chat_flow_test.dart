@@ -108,6 +108,7 @@ void main() {
       await tap(find.byType(BackButton));
       expect(find.text(promptName), findsOneWidget);
       await tap(find.byTooltip('添加工具或附件'));
+      await tap(find.text('更多输入'));
       await tap(find.text('提示模板'));
       await tap(find.text(templateName));
       expect(
