@@ -40,6 +40,8 @@ flutter test --no-uninstall -d "$DEVICE_ID" integration_test/run_all.dart \
 
 ## 用真实 API 验证工作区编程
 
+针对已有项目的修复，另有可复现的[工作区编辑工具对照评测](workspace-harness-benchmark.md)，包括版本、任务、隐藏验收和逐项结果。
+
 在专用模拟器上单独运行 `live_workspace_program_test.dart`。用例从一条中文聊天请求开始，核对模型调用工作区工具的回执、端上执行的退出码、结果文件，以及换输入后同一份源码的输出。模型服务会按账号规则计费。默认回归不会发起这些请求。
 
 在 Mac 上启动对应服务的本机转发器。它从登录钥匙串服务 `studio.orb.mobile.api-tests` 的 `deepseek` 或 `openai` 账户读取凭据，使用 HTTPS 连接官方 API。也可以加 `--credential-source env`，从进程环境中的 `ORB_TEST_DEEPSEEK_API_KEY` 或 `ORB_TEST_OPENAI_API_KEY` 读取。模拟器只接收端口、供应商名和模型名。
