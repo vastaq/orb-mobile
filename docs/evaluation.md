@@ -16,7 +16,7 @@
 
 - 运行静态分析、整个 Flutter 单元及组件套件和六个原生集成测试文件。集成覆盖普通聊天、排队、语音打断与录音、记忆和续写、文档与图像、创建及执行任务和工作文件。受控服务负责产生已知的模型输出，实际文件与任务写入均由手机完成。
 - Android 实体机验证应用外悬浮球、左右贴边、点开面板、长按及回到应用后收起。模拟器另测最小与最大直径、自由拖动、重新开启贴边和横竖屏。语音有静音、风噪、低音量预录人声与服务返回无语音的对照。
-- iOS 使用模拟器。商业云服务的账号权限、实时价格、响应质量及线上可用性未用个人付费密钥实测。早期使用过真实测试模型跑通能力，后续回归可直接用受控 HTTP 服务。
+- iOS 使用模拟器。0.3.0 build 7 的基线采用受控 HTTP 服务和测试模型。工作区编程另提供使用真实云 API 的专项用例，运行方法见下文。
 - 桌面互通覆盖 Claude Code 和 OpenCode。Codex CLI 搭配当次测试推理服务时在工具协议协商阶段停止，未取得其实际读写记录。普通 Markdown、相对路径和原始附件仍可由通用文件工具打开。
 
 ## 复现不依赖模型的全量回归
@@ -37,6 +37,29 @@ flutter test --no-uninstall -d "$DEVICE_ID" integration_test/run_all.dart \
 在明确提供无声麦克风输入的测试设备上，还可启用 `--dart-define=ORB_TEST_SILENT_MIC=true` 验证零转写调用。实体机语音质量和云服务模型表现需要各自的实际输入与服务凭据。
 
 工作区程序可单独运行 `integration_test/workspace_program_test.dart`。在装有日常使用版 Orb 的 Android 手机上，测试包需要独立的应用 ID。先构建测试 APK 并核对其中的实际包名，然后再指定设备运行并传入 `--no-uninstall`。Flutter 在首次构建前可能从 Gradle namespace 推断应用 ID，测试结束时会按预先解析的包名停止应用，默认还会卸载它。独立模拟器可直接使用以上命令。
+
+## 用真实 API 验证工作区编程
+
+在专用模拟器上单独运行 `live_workspace_program_test.dart`。用例从一条中文聊天请求开始，核对模型调用工作区工具的回执、端上执行的退出码、结果文件，以及换输入后同一份源码的输出。模型服务会按账号规则计费。默认回归不会发起这些请求。
+
+在 Mac 上启动对应服务的本机转发器。它从登录钥匙串服务 `studio.orb.mobile.api-tests` 的 `deepseek` 或 `openai` 账户读取凭据，使用 HTTPS 连接官方 API。也可以加 `--credential-source env`，从进程环境中的 `ORB_TEST_DEEPSEEK_API_KEY` 或 `ORB_TEST_OPENAI_API_KEY` 读取。模拟器只接收端口、供应商名和模型名。
+
+```sh
+/usr/bin/python3 tool/provider_test_proxy.py deepseek --port 18961
+```
+
+保持转发器运行。在另一终端执行以下命令，`DEVICE_ID` 指向专用 Android 模拟器。iOS 模拟器可省略 `adb reverse`。
+
+```sh
+adb -s "$DEVICE_ID" reverse tcp:18961 tcp:18961
+flutter test --no-uninstall -d "$DEVICE_ID" integration_test/live_workspace_program_test.dart \
+  --dart-define=ORB_LIVE_PROGRAM=true \
+  --dart-define=ORB_LIVE_PROGRAM_PROVIDER=deepseek \
+  --dart-define=ORB_LIVE_PROGRAM_MODEL=deepseek-flash \
+  --dart-define=ORB_LIVE_PROGRAM_PORT=18961
+```
+
+测试 OpenAI 时，将转发器和测试中的供应商都改为 `openai`，模型改为账号可用的 Responses 模型。测试结束后停止转发器，在 Android 上执行 `adb -s "$DEVICE_ID" reverse --remove tcp:18961`。
 
 ## 0.3.0 build 7 实测结果
 
