@@ -85,6 +85,9 @@ class MobileHarness {
         'For a request to build or run a local program, save its C source in a project folder, '
             'call workspace_run, and check its exit code and output before reporting success. '
             'Use the actual diagnostics to fix and rerun it when appropriate.',
+      'For a targeted edit in a large file, search for the named identifier or value '
+          'within its path, then read nearby lines if needed. Use the latest returned '
+          'sha256 for each successive edit to that file.',
       if (schedule != null) 'For a clear request to schedule something, call schedule_create. If the time is ambiguous, ask. For a follow-up, use the saved task id and latest revision. Never claim a reminder is scheduled without a successful tool result.',
       if (enabled.isNotEmpty)
         'Enabled skills (id, description). Read the relevant skill via skill_read before use:\n${enabled.map((s) => jsonEncode([s.current.id, s.current.description])).join('\n')}',

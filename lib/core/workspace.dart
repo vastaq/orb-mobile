@@ -304,6 +304,11 @@ class Workspace {
       if (page.length > limit || nextLine != null)
         'next_offset': startOffset + length,
       if (page.length <= limit && nextLine != null) 'next_line': nextLine,
+      if (firstLine == null && startOffset == 0 && page.length > limit)
+        'hint':
+            'For a local change, search the named text with workspace_search '
+            'and set prefix to this path. Read around a hit with start_line. '
+            'Use next_offset when you need the whole file.',
     };
   }
 
