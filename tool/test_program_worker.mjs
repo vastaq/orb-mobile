@@ -12,6 +12,7 @@ if (!isMainThread) {
 } else {
   const compiler = await readFile(new URL('../assets/program_runner/compiler.wasm', import.meta.url));
   const sysroot = JSON.parse(await readFile(new URL('../assets/program_runner/sysroot.json', import.meta.url), 'utf8'));
+  const quickjs = await readFile(new URL('../assets/program_runner/quickjs.wasm', import.meta.url));
   async function run(source, options = {}, runTimeout) {
     const worker = new Worker(new URL(import.meta.url));
     let timer;
@@ -34,6 +35,30 @@ if (!isMainThread) {
       await worker.terminate();
     }
   }
+  const javascript = (source, options = {}, timeout) =>
+    run(source, { entry: 'summary.js', quickjs, ...options }, timeout);
+  const jsFiles = { 'data/prices.tsv': '茶\t12\n水\t3\n', 'units.tsv': '茶\t2\n水\t4\n茶\t3\n' };
+  const js = `const rows = path => readText(path).trim().split('\\n').map(line => line.split('\\t'));
+const prices = new Map(rows('data/prices.tsv'));
+const total = rows('units.tsv').reduce((sum, [name, n]) => sum + n * prices.get(name), 0);
+console.log(readStdin(), total);`;
+  assert.deepEqual(await javascript(js, { files: jsFiles, stdin: '总额😀' }),
+    { phase: 'run', exit_code: 0, stdout: '总额😀 72\n', stderr: '' });
+  const jsError = await javascript('const broken = ');
+  assert.equal(jsError.phase, 'compile');
+  assert.notEqual(jsError.exit_code, 0);
+  assert.match(jsError.stderr, /SyntaxError/);
+  const unavailable = await javascript('readText("../private.tsv")', { files: jsFiles });
+  assert.equal(unavailable.phase, 'run');
+  assert.notEqual(unavailable.exit_code, 0);
+  assert.match(unavailable.stderr, /input_paths/);
+  const isolated = await javascript(`console.log(typeof fetch, typeof window, typeof process,
+    typeof require, typeof XMLHttpRequest, typeof postMessage, typeof WebAssembly);`);
+  assert.equal(isolated.stdout, Array(7).fill('undefined').join(' ') + '\n');
+  assert.notEqual((await javascript('console.log("x".repeat(70000))')).exit_code, 0);
+  assert.notEqual((await javascript('new ArrayBuffer(70 * 1024 * 1024)')).exit_code, 0);
+  assert.equal(await javascript('while (true) {}', {}, 100), 'host-timeout');
+  assert.equal((await javascript('console.log(1+1)')).stdout, '2\n');
   // The model generated this program during device UAT. In particular, sizeof
   // must measure the whole local array, and fgets must accept the real stdin.
   const counter = `#include <stdio.h>
@@ -65,6 +90,19 @@ int main() {
     }, stdin: '12345\nA',
   });
   assert.deepEqual(nested, { phase: 'run', exit_code: 7, stdout: '3 3 1 lines=3', stderr: '' });
+
+  const project = {
+    'src/add.h': 'int add(int, int);',
+    'src/add.c': '#include "add.h"\nint add(int a, int b){ return a+b; }',
+    'src/notes.c': 'data only, do not compile this text',
+  };
+  const linked = await run('#include <stdio.h>\n#include "add.h"\nint main(){printf("%d",add(24,18));return 0;}', {
+    files: project, units: ['src/add.c'],
+  });
+  assert.deepEqual(linked, { phase: 'run', exit_code: 0, stdout: '42', stderr: '' });
+  const absent = await run('int main(){return 0;}', { files: project, units: ['missing.c'] });
+  assert.equal(absent.phase, 'compile');
+  assert.notEqual(absent.exit_code, 0);
 
   const csv = '\ufeff姓名,城市\n小吴,苏州😀\n';
   const echoed = await run('#include <stdio.h>\nint main(){int c;while((c=getchar())!=EOF)putchar(c);return 0;}', { stdin: csv });
@@ -129,5 +167,5 @@ int main(){
   });
   assert.equal(tooLarge.phase, 'compile');
   assert.match(tooLarge.stderr, /1 MiB/);
-  console.log('PASS: xcc, model-authored C, stdio/ctype/string, nested headers, UTF-8, read-only project files, compiler diagnostics, partial output and resource limits.');
+  console.log('PASS: xcc and QuickJS, model-authored C, multi-file programs and tabular computation, UTF-8, read-only inputs, diagnostics, output and resource limits.');
 }

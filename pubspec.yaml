@@ -44,6 +44,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/program_runner/compiler.wasm
+    - assets/program_runner/quickjs.wasm
     - assets/program_runner/sysroot.json
     - assets/program_runner/worker.js
     - assets/program_runner/THIRD_PARTY_NOTICES.txt

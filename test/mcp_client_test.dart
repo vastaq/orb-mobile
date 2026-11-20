@@ -10,6 +10,8 @@ class DocumentServer {
   final HttpServer socket;
   String get url => 'http://127.0.0.1:${socket.port}/mcp';
   int sessions = 0, calls = 0, deletes = 0;
+  String? note;
+  bool expireWriteResponse = false;
   bool expired = false,
       change = false,
       fail = false,
@@ -94,6 +96,15 @@ class DocumentServer {
         }
       case 'tools/call':
         calls++;
+        final params = b['params'] as Map;
+        if (params['name'] == 'note.write') {
+          note = (params['arguments'] as Map)['text'] as String;
+          if (expireWriteResponse) {
+            resp.statusCode = 404;
+            await resp.close();
+            return;
+          }
+        }
         result = {
           'content': [
             {'type': 'text', 'text': '七号松塔'},
@@ -215,6 +226,52 @@ void main() {
       await expectLater(store.execute(call), throwsFormatException);
     },
   );
+  test('external writes need per-call confirmation, live authorization and no replay', () async {
+    final c = await store.add('本地笔记', server.url, '');
+    store.allow(c.id, 'note.write', true, permitWrites: true);
+    expect(store.tools, isEmpty);
+    final name = store.toolsForTurn(interactive: true).single.name;
+    final call = ChatToolCall(
+      id: 'draft',
+      name: name,
+      arguments: {'text': '明天整理书架'},
+    );
+    await expectLater(store.execute(call), throwsFormatException);
+    await expectLater(
+      store.execute(
+        call,
+        review: (title, details, label) async {
+          expect(details, contains(c.origin));
+          expect(details, contains('明天整理书架'));
+          return false;
+        },
+      ),
+      throwsFormatException,
+    );
+    expect(server.calls, 0);
+    await expectLater(
+      store.execute(
+        call,
+        review: (_, _, _) async {
+          store.allow(c.id, 'note.write', false);
+          return true;
+        },
+      ),
+      throwsFormatException,
+    );
+    expect(server.note, isNull);
+    store.allow(c.id, 'note.write', true, permitWrites: true);
+    await store.execute(call, review: (_, _, _) async => true);
+    expect(server.note, '明天整理书架');
+    expect(server.calls, 1);
+    server.expireWriteResponse = true;
+    await expectLater(
+      store.execute(call, review: (_, _, _) async => true),
+      throwsFormatException,
+    );
+    expect(server.calls, 2);
+  });
+
   test('changed remote declarations stay unavailable until refreshed and reapproved', () async {
     final c = await store.add('资料库', server.url, '');
     store.allow(c.id, 'note.read', true);

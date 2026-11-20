@@ -31,6 +31,9 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "WorkspaceCalendarPlugin") {
+      WorkspaceCalendarPlugin.register(with: registrar)
+    }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "WorkspaceProgramPlugin") {
       WorkspaceProgramPlugin.register(with: registrar)
     }

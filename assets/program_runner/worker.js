@@ -1,4 +1,4 @@
-// A single-use Web Worker compiles one C translation unit and runs its Wasm output.
+// Single-use Worker for the bundled C compiler and QuickJS interpreter.
 'use strict';
 
 const encoder = new TextEncoder();
@@ -81,7 +81,7 @@ function prepareProject({ entry, files, source }, stdinSize) {
   if (names.length > 32) throw Error('Project exceeds 32 input files.');
   const contents = new Map();
   const sourceBytes = encodeText(source, FILE_LIMIT, 'Source');
-  if (source.includes('\0')) throw Error('C source contains a null byte.');
+  if (source.includes('\0')) throw Error('Source contains a null byte.');
   let total = sourceBytes.length + stdinSize;
   for (const name of names) {
     if (canonicalPath(name) !== name) throw Error('Invalid project file path.');
@@ -192,7 +192,7 @@ class VirtualFiles {
   }
 }
 
-function execute(bytes, args, stdin, fs, stdout, stderr) {
+function execute(bytes, args, stdin, fs, stdout, stderr, onQuickJSStart) {
   const exitSignal = {};
   const handles = new Map([[0, { file: { bytes: stdin, size: stdin.length }, pos: 0, read: true }]]);
   const argv = args.map(arg => encoder.encode(arg + '\0'));
@@ -338,14 +338,38 @@ function execute(bytes, args, stdin, fs, stdout, stderr) {
       return 0;
     },
   };
+  const imports = { wasi_snapshot_preview1: wasi };
+  if (onQuickJSStart) {
+    // Only the bundled interpreter imports these WASI libc operations. Its
+    // guest receives console, readText and readStdin, all inside Wasm.
+    imports.orb = { started: onQuickJSStart };
+    wasi.clock_time_get = (clock, _precision, output) => {
+      if (clock > 1) return WASI.invalid;
+      const ms = clock === 0 ? Date.now() : performance.now();
+      write64(output, BigInt(Math.floor(ms)) * 1000000n);
+      return 0;
+    };
+    wasi.fd_fdstat_get = (fd, output) => {
+      const directory = fs.preopens.has(fd);
+      if (!directory && fd > 2 && !handles.has(fd)) return WASI.badFd;
+      slice(output, 24).fill(0);
+      view().setUint8(output, directory ? 3 : fd <= 2 ? 2 : 4);
+      const rights = fd === 1 || fd === 2 ? 64n : 2n | 4n | 32n;
+      write64(output + 8, directory ? 8192n : rights);
+      write64(output + 16, directory ? 2n | 4n | 32n : 0n);
+      return 0;
+    };
+    wasi.fd_fdstat_set_flags = (fd, flags) =>
+      fd > 2 && !handles.has(fd) ? WASI.badFd : flags === 0 ? 0 : WASI.denied;
+  }
   const module = new WebAssembly.Module(withMemoryCeiling(bytes));
   for (const imported of WebAssembly.Module.imports(module)) {
-    if (imported.module !== 'wasi_snapshot_preview1' || imported.kind !== 'function' ||
-        !Object.prototype.hasOwnProperty.call(wasi, imported.name)) {
+    if (imported.kind !== 'function' || !Object.prototype.hasOwnProperty.call(imports, imported.module) ||
+        !Object.prototype.hasOwnProperty.call(imports[imported.module], imported.name)) {
       throw Error('This local runtime does not provide ' + imported.name + '. Edit the source before rerunning.');
     }
   }
-  const instance = new WebAssembly.Instance(module, { wasi_snapshot_preview1: wasi });
+  const instance = new WebAssembly.Instance(module, imports);
   memory = instance.exports.memory;
   try {
     instance.exports._start();
@@ -363,11 +387,26 @@ function report(request) {
   try {
     const stdin = encodeText(request.stdin, FILE_LIMIT, 'Standard input');
     const project = prepareProject(request, stdin.length);
+    if (request.entry.toLowerCase().endsWith('.js')) {
+      if (request.units?.length) throw Error('JavaScript takes data files in input_paths, not C source_paths.');
+      const exit = execute(request.quickjs, ['quickjs', request.entry], stdin,
+        new VirtualFiles(project), stdout, stderr, () => {
+          phase = 'run';
+          self.postMessage({ started: 'run' });
+        });
+      return { phase, exit_code: exit, stdout: stdout.outputText('stdout'), stderr: stderr.outputText('stderr') };
+    }
     const compiler = new Uint8Array(request.compiler);
     if (compiler.length > BINARY_LIMIT || !request.sysroot) throw Error('Invalid packaged C toolchain.');
     const fs = new VirtualFiles(project, request.sysroot);
     const destination = '/tmp/orb-program.wasm';
-    const args = ['/usr/bin/cc', '-I/work', '-o', destination, '/work/' + request.entry];
+    const units = request.units ?? [];
+    if (!Array.isArray(units) || units.length > 32 || units.some(name =>
+      typeof name !== 'string' || !name.endsWith('.c') || name === request.entry || !project.has(name))) {
+      throw Error('Additional C sources must be selected project files.');
+    }
+    const args = ['/usr/bin/cc', '-I/work', '-o', destination, '/work/' + request.entry,
+      ...units.map(name => '/work/' + name)];
     const compileExit = execute(compiler, args, new Uint8Array(0), fs, stdout, stderr);
     if (compileExit !== 0) return { phase, exit_code: compileExit, stdout: stdout.text(), stderr: stderr.text() };
     const output = fs.files.get(destination);

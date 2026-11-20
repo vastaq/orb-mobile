@@ -24,3 +24,9 @@ class ChatToolCall {
 }
 
 typedef RunChatTool = Future<Map<String, dynamic>> Function(ChatToolCall call);
+
+typedef ReviewAction = Future<bool> Function(
+  String title,
+  String details,
+  String confirmLabel,
+);

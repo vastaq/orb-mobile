@@ -8,14 +8,21 @@ import 'workspace.dart';
 const workspaceProgramTool = ChatTool(
   name: 'workspace_run',
   description:
-      'Compile a saved C entry file to WebAssembly on the phone and run it. '
-      'The entry path is workspace-relative. Other paths accept a simple filename '
-      'in the entry directory or a full workspace-relative path in that project. '
-      'The program sees only listed input_paths '
-      'within the entry directory, under names relative to that directory. '
+      'Run a saved JavaScript (.js, QuickJS) or C (.c) entry on the phone. '
+      'For tabular, JSON, text or arithmetic tasks, use JavaScript to compute and verify the result. '
+      'In JavaScript use readText("data.tsv") for files listed in input_paths, readStdin() '
+      'for the supplied stdin or stdin_path, and console.log(text) for stdout. '
+      'Each console.log ends with a newline. No Node, browser, imports, or network. '
+      'The entry path is workspace-relative. For a header such as #include "include/config.h", '
+      'pass input_paths: ["./include/config.h"]. All ./ paths resolve under the entry folder. '
+      'Use source_paths for any additional .c files to compile and link; use '
+      'input_paths for headers and read-only data. Only selected files in the '
+      'project are visible, under names relative to the entry directory. '
       'Use a separate folder per project, e.g. tools/sum/main.c. '
       'Use standard C headers and main. Read stdin with getchar or fgets, write '
       'stdout with printf, and use fopen in read mode for listed project files. '
+      'The bundled C library has limited scanf-family parsing and does not provide ferror; '
+      'for tokenized text use fgets with strtol, strchr or explicit character parsing. '
       'Use stdin_path for a local UTF-8 file without copying its contents into chat. '
       'On a compile error, edit the source using the returned sha256 before rerunning. '
       'To keep stdout as a file on success, set output_path. To replace different '
@@ -28,6 +35,11 @@ const workspaceProgramTool = ChatTool(
       'stdin': {'type': 'string'},
       'stdin_path': {'type': 'string'},
       'input_paths': {
+        'type': 'array',
+        'items': {'type': 'string'},
+        'maxItems': 32,
+      },
+      'source_paths': {
         'type': 'array',
         'items': {'type': 'string'},
         'maxItems': 32,
@@ -54,32 +66,68 @@ Future<Map<String, dynamic>> runStoredProgram(
       await workspace.read(path) ?? (throw OrbException('找不到工作文件：$path'));
 
   final source = await readRequired(pathArgument(arguments['path']));
-  if (!source.path.toLowerCase().endsWith('.c')) {
-    throw const OrbException('当前可以运行 C 源码，请选择 .c 入口文件。');
+  final js = source.path.toLowerCase().endsWith('.js');
+  if (!js && !source.path.toLowerCase().endsWith('.c')) {
+    throw const OrbException('请选择 JavaScript (.js) 或 C (.c) 入口文件。');
   }
   final split = source.path.lastIndexOf('/') + 1;
   final folder = source.path.substring(0, split);
   final entry = source.path.substring(split);
 
   String projectPath(Object? value) {
+    if (value is String && value.startsWith('./')) {
+      return '$folder${workspacePath(value.substring(2))}';
+    }
     final path = pathArgument(value);
     if (!path.contains('/')) return '$folder$path';
     if (folder.isEmpty || !path.startsWith(folder)) {
-      throw const OrbException('输入和输出文件需要位于入口文件所在的项目目录中。');
+      throw OrbException(
+        '路径 $path 需要位于入口文件所在的项目目录中。项目内的子目录请写 ./$path，或使用含项目目录的完整工作区路径。',
+      );
     }
     return path;
   }
 
+  Future<String> readProjectPath(Object? value) async {
+    if (value is String && folder.isNotEmpty && !value.startsWith('./')) {
+      final name = pathArgument(value);
+      if (name.contains('/') && !name.startsWith(folder)) {
+        final local = '$folder$name';
+        if (await workspace.read(local) != null) return local;
+      }
+    }
+    return projectPath(value);
+  }
+
   final inputs = arguments['input_paths'] ?? const [];
+  final sources = arguments['source_paths'] ?? const [];
   final literal = arguments['stdin'];
   final stdinPath = arguments['stdin_path'];
-  if (inputs is! List || inputs.length > 32) {
-    throw const OrbException('每次运行最多可以指定 32 个输入文件。');
+  if (inputs is! List ||
+      sources is! List ||
+      inputs.length > 32 ||
+      sources.length > 32) {
+    throw const OrbException('每次运行最多可以指定 32 个额外源码、头文件和输入文件。');
   }
+  if (js && sources.isNotEmpty) {
+    throw const OrbException(
+      'JavaScript 的数据文件请列入 input_paths。source_paths 用于 C 源码。',
+    );
+  }
+  final units = {for (final path in sources) await readProjectPath(path)}
+    ..remove(source.path);
+  if (units.any((path) => !path.endsWith('.c'))) {
+    throw const OrbException('额外编译的源文件必须是 .c 文件。');
+  }
+  final selected = {
+    for (final path in inputs) await readProjectPath(path),
+    ...units,
+  }..remove(source.path);
+  if (selected.length > 32) throw const OrbException('每次运行最多可以指定 32 个项目文件。');
   if (literal != null && (literal is! String || stdinPath != null)) {
     throw const OrbException('请在 stdin 文本和 stdin_path 输入文件之间选择一项。');
   }
-  final inputPath = stdinPath == null ? null : projectPath(stdinPath);
+  final inputPath = stdinPath == null ? null : await readProjectPath(stdinPath);
   final stdin = inputPath == null
       ? literal as String? ?? ''
       : (await readRequired(inputPath)).text;
@@ -104,10 +152,8 @@ Future<Map<String, dynamic>> runStoredProgram(
 
   includeText(source.text);
   includeText(stdin);
-  for (final value in inputs) {
-    final path = projectPath(value);
+  for (final path in selected) {
     final relative = path.substring(split);
-    if (relative == entry || files.containsKey(relative)) continue;
     final input = await readRequired(path);
     includeText(input.text);
     files[relative] = input.text;
@@ -123,6 +169,7 @@ Future<Map<String, dynamic>> runStoredProgram(
   final result = await runWorkspaceProgram(
     source: source.text,
     entry: entry,
+    units: [for (final path in units) path.substring(split)],
     files: files,
     stdin: stdin,
     control: control,
@@ -133,10 +180,11 @@ Future<Map<String, dynamic>> runStoredProgram(
     ...result,
     if (result['phase'] == 'compile' && result['exit_code'] != 0) ...{
       'sha256': source.hash,
-      'next_action':
-          'Use workspace_edit with this path and sha256 as expected_hash '
-          'to correct the compilation diagnostic, or supply a missing header in input_paths. '
-          'Rerunning unchanged source with a different stdin or output path cannot fix a compiler error.',
+      'next_action': js
+          ? 'Use workspace_edit with this path and sha256 as expected_hash to fix the JavaScript syntax error.'
+          : 'Use workspace_edit with this path and sha256 as expected_hash '
+                'to correct the compilation diagnostic, or supply a missing header in input_paths. '
+                'Rerunning unchanged source with a different stdin or output path cannot fix a compiler error.',
     },
   };
   if (outputPath != null &&

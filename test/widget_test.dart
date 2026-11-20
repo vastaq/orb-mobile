@@ -1,9 +1,57 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:orb_mobile/core/calendar_tools.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orb_mobile/core/orb_controller.dart';
 import 'package:orb_mobile/ui/chat.dart';
 
 void main() {
+  testWidgets('calendar receipt opens the exact saved system event', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(CalendarTools.channel, (call) async {
+      calls.add(call);
+      return true;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(CalendarTools.channel, null),
+    );
+    final controller = OrbController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageView(
+            controller: controller,
+            pending: false,
+            message: const OrbMessage(
+              'assistant',
+              '已创建。',
+              metadata: {
+                'localTools': [
+                  {
+                    'name': 'calendar_create',
+                    'ok': true,
+                    'calendar_id': 'local',
+                    'id': '7',
+                    'title': '木工课',
+                  },
+                ],
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('查看日程 · 木工课'));
+    await tester.pump();
+    expect(calls.single.method, 'open');
+    expect(calls.single.arguments, {'calendarId': 'local', 'id': '7'});
+  });
+
   testWidgets('empty chat fits small phone and exposes its primary actions', (
     tester,
   ) async {

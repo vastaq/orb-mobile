@@ -9,6 +9,7 @@ const _channel = MethodChannel('studio.orb/workspace-program');
 final _available = _checkAvailability();
 final _compiler = _assetBase64('compiler.wasm');
 final _sysroot = _assetBase64('sysroot.json');
+final _quickjs = _assetBase64('quickjs.wasm');
 final _worker = _assetBase64('worker.js');
 int _nextRun = 0;
 
@@ -65,6 +66,7 @@ Future<Map<String, dynamic>> runWorkspaceProgram({
   required String source,
   required String entry,
   required Map<String, String> files,
+  List<String> units = const [],
   required String stdin,
   ProgramRunControl? control,
 }) async {
@@ -78,11 +80,16 @@ Future<Map<String, dynamic>> runWorkspaceProgram({
         'source': source,
         'entry': entry,
         'files': files,
+        'units': units,
         'stdin': stdin,
       }),
     ),
   );
-  // All interpolated values are base64 data. Only bundled code becomes script.
+  final js = entry.toLowerCase().endsWith('.js');
+  final engine = js ? await _quickjs : await _compiler;
+  final sysroot = js ? '' : await _sysroot;
+  // Guest source and files stay inside the serialized request. Only bundled
+  // Worker code becomes host script, for either language.
   final html =
       '''<!doctype html><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-orb' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:; child-src blob:; connect-src 'none'">
@@ -110,11 +117,14 @@ Future<Map<String, dynamic>> runWorkspaceProgram({
       else finish(event.data);
     };
     worker.onerror = event => failure(1, event.message || '无法启动编译执行环境。');
-    const compiler = bytes('${await _compiler}');
-    const sysroot = JSON.parse(new TextDecoder().decode(bytes('${await _sysroot}')));
+    const engine = bytes('$engine');
+    const library = '$sysroot';
+    const runtime = library
+      ? {compiler: engine, sysroot: JSON.parse(new TextDecoder().decode(bytes(library)))}
+      : {quickjs: engine};
     const request = JSON.parse(new TextDecoder().decode(bytes('$input')));
     startTimer();
-    worker.postMessage({...request, compiler, sysroot}, [compiler.buffer]);
+    worker.postMessage({...request, ...runtime}, [engine.buffer]);
   } catch (error) { failure(1, String(error)); }
 })();
 </script>''';

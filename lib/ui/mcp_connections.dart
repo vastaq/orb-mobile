@@ -86,7 +86,7 @@ class _McpPageState extends State<McpConnectionsPage> {
           if (!busy && rows.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Text('添加可信的 MCP 服务，选择可以在聊天中调用的只读工具。'),
+              child: Text('添加可信的 MCP 服务，选择聊天中可以使用的工具。更改数据前会逐次确认。'),
             ),
           for (final row in rows)
             ListTile(
@@ -278,13 +278,20 @@ class _ToolsState extends State<_Tools> {
               SwitchListTile(
                 title: Text(t.name),
                 subtitle: Text(
-                  t.readOnly ? t.description : '服务未声明此工具为只读，手机端已停用。',
+                  t.readOnly
+                      ? t.description
+                      : '${t.description}\n可能更改数据，每次调用前由你确认。',
                 ),
                 value: row.allowed.contains(t.name),
-                onChanged: !t.readOnly || busy
+                onChanged: busy
                     ? null
                     : (on) => run(() async {
-                        widget.store.allow(row.id, t.name, on);
+                        widget.store.allow(
+                          row.id,
+                          t.name,
+                          on,
+                          permitWrites: !t.readOnly,
+                        );
                       }),
               ),
             const Divider(),

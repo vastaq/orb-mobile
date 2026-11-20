@@ -84,6 +84,7 @@ class StreamingChatProvider implements RichChatProvider {
     final allowed = {for (final tool in options.tools) tool.name};
     final completed = <String, (PendingToolCall, ChatToolReply)>{};
     var executed = 0;
+    var workspaceOnly = true;
     final totals = <String, int>{};
     var allUsageKnown = true;
     final citations = <String, dynamic>{};
@@ -271,7 +272,13 @@ class StreamingChatProvider implements RichChatProvider {
         if (options.onTool == null || options.tools.isEmpty) {
           throw const OrbException('当前对话没有启用本地工具。');
         }
-        if (round >= 6 || executed + calls.length > 16) {
+        workspaceOnly = workspaceOnly && calls.every(
+          (call) => allowed.contains(call.name) && call.name.startsWith('workspace_'),
+        );
+        // Reading, editing and verifying a file often need separate model turns.
+        // Keep the existing action budget for these, and the shorter turn limit
+        // for tasks that use a scheduler, MCP server or another tool.
+        if ((!workspaceOnly && round >= 6) || executed + calls.length > 16) {
           throw const OrbException('已达到本轮工具调用上限，已执行的操作仍然有效。');
         }
         final replies = <ChatToolReply>[];

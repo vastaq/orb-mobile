@@ -118,6 +118,40 @@ void main() {
 
   const output = '{"ids":["31","32"]}';
 
+  const workspaceRun = ChatTool(
+    name: 'workspace_run', description: 'Run workspace program', parameters: {},
+  );
+  for (final scenario in [
+    (name: 'verify after six workspace rounds', requested: 7, limit: 7, mixed: false),
+    (name: 'stop after sixteen workspace calls', requested: 17, limit: 16, mixed: false),
+    (name: 'retain the mixed tool round limit', requested: 7, limit: 6, mixed: true),
+  ]) {
+    test(scenario.name, () async {
+      serve((round) {
+        if (round > scenario.requested) {
+          return [chunk({'content': 'done'}, stop: 'stop', usage: counts)];
+        }
+        final name = scenario.mixed && round == 1 ? tool.name : workspaceRun.name;
+        return completionsCall(id: 'call-$round', name: name);
+      });
+      var count = 0;
+      final reply = provider.replyRich(
+        _Loopback(ModelService.custom, server.port),
+        question,
+        ChatOptions(tools: [tool, workspaceRun], onTool: (_) async {
+          count++;
+          return {};
+        }),
+      ).drain<void>();
+      if (scenario.requested > scenario.limit) {
+        await expectLater(reply, throwsA(isA<OrbException>()));
+      } else {
+        await reply;
+      }
+      expect(count, scenario.limit);
+    });
+  }
+
   for (final service in [ModelService.deepSeek, ModelService.custom]) {
     test(
       '${service.name} streams calls and returns tool ids and outputs on the wire',

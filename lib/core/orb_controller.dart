@@ -26,6 +26,7 @@ class OrbController extends ChangeNotifier {
        _provider = provider ?? StreamingChatProvider(usagePurpose: '对话'),
        _memory = memoryHarness ?? MemoryHarness();
 
+  ReviewAction? reviewAction;
   final OrbStore _store;
   final ChatProvider _provider;
   final MemoryHarness _memory;
@@ -393,6 +394,7 @@ class OrbController extends ChangeNotifier {
         final harness = await MobileHarness.forTurn(
           turnKey: '${turn.thread}:${turn.answer}',
           programControl: programControl,
+          reviewAction: reviewAction,
         );
         harness.addInstructions(context);
         final priorTools = meta['localTools'] as List? ?? [];

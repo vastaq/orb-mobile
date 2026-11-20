@@ -141,6 +141,21 @@ class TaskService {
     return null;
   }
 
+  /// Only an interactive foreground reminder may open the OS permission dialog.
+  Future<bool?> reminderNotificationPermission({required bool mayAsk}) async {
+    try {
+      final granted = await notificationsEnabled();
+      if (granted == true ||
+          !mayAsk ||
+          WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+        return granted;
+      }
+      return await requestNotifications();
+    } on PlatformException {
+      return null;
+    }
+  }
+
   Future<OrbTask> save(OrbTask draft, {String? createSource}) async {
     if (createSource != null) {
       final existing = await store.createdFrom(createSource);

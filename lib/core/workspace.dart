@@ -224,7 +224,8 @@ class Workspace {
     ),
     _tool(
       'workspace_write',
-      'Create a text file, or overwrite one the user asked to change. Read the '
+      'Create a text file, or overwrite one the user asked to change. When asked for only '
+          'certain records or a strict format, omit any excluded records and commentary from text. Read the '
           'entire existing file with workspace_read first and provide its sha256 as expected_hash.',
       {'path': _string, 'text': _string, 'expected_hash': _string},
       ['path', 'text'],
