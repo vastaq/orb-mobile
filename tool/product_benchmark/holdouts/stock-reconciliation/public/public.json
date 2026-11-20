@@ -1,0 +1,10 @@
+[
+  {
+    "id": "stock-reconciliation",
+    "prompt": "请用 project/order.tsv 和 project/receiving.tsv 给仓库做一份到货差异表，保存为 project/differences.tsv。按 SKU 汇总，同一 SKU 的订单数量要相加；收货登记中，签收数量加到实收，退回数量从实收扣除，暂存不计。即使一个 SKU 只出现在一张表，也要纳入核对，另一边数量按 0。仅列有差异的 SKU，按 SKU 升序排列。第一行使用制表符分隔的表头 sku、ordered、received、delta，之后每行四列，delta 等于实收减订购。保留两张原表。",
+    "files": {
+      "project/order.tsv": "sku\tname\tquantity\nP-17\t手提袋\t8\nA-02\t号码牌\t5\nB-14\t信封\t6\nP-17\t手提袋\t4\nC-09\t夹子\t10\nD-06\t标签\t3\nF-11\t明信片\t7\nH-05\t透明套\t5\nJ-08\t回形针\t4\n",
+      "project/receiving.tsv": "sku\tstatus\tquantity\nP-17\t签收\t10\nX-03\t签收\t4\nC-09\t签收\t3\nA-02\t签收\t8\nB-14\t签收\t6\nF-11\t签收\t3\nJ-08\t暂存\t1\nD-06\t签收\t2\nF-11\t退回\t3\nP-17\t暂存\t3\nJ-08\t签收\t4\nA-02\t退回\t2\nC-09\t签收\t7\nP-17\t签收\t1\nD-06\t暂存\t2\n"
+    }
+  }
+]

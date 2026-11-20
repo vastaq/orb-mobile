@@ -15,18 +15,19 @@
 | `core/memory_harness.dart`、`orb_store.dart` | 根据用户原话规划新增、更新或遗忘，在 SQLite 事务中应用并留下回执 | 更新已有记忆要匹配读取时的原文，允许用户随后手动修改 |
 | `core/mobile_tools.dart`、`ui/compose_tools.dart` | 手机命令与附件选择，产出可编辑文本或附件 | 一个新模板只是一段数据；新原生输入实现相同的草稿返回值 |
 | `core/mobile_harness.dart`、`tool_types.dart` | 向已选模型提供本轮工具，执行调用并把结果回送模型，保存回执 | 权限、调度、技能和工作文件在手机端独立校验 |
-| `core/workspace.dart`、`skill_packages.dart`、`mcp_client.dart` | 本地工作文件、用户安装的技能包与逐项授权的远端只读工具 | 工作文件可用内容哈希更新，技能按版本安装，MCP 服务走 Streamable HTTP |
-| `core/workspace_program.dart`、`program_runtime.dart`、`assets/program_runner/` | 把保存的 C 源码编译为 WebAssembly 并在手机上运行 | 工作区负责限定输入和保存输出，共享 Worker 负责编译、执行和资源上限。Android 与 iOS 仅托管一次执行会话 |
+| `core/workspace.dart`、`skill_packages.dart`、`mcp_client.dart` | 本地工作文件、用户安装的技能包与逐项授权的远端工具 | 工作文件可用内容哈希更新，技能按版本安装，MCP 服务走 Streamable HTTP |
+| `core/calendar_tools.dart`、Android Calendar Provider、iOS EventKit | 查询系统日历并在用户确认后更改单次日程 | 原生层检查权限、日历归属与可编辑性，前台展示时间、地点及改动 |
+| `core/workspace_program.dart`、`program_runtime.dart`、`assets/program_runner/` | 使用 xcc 编译并运行 C，或在 QuickJS WebAssembly 中执行 JavaScript | 工作区负责限定输入和保存输出，共享 Worker 负责编译、执行和资源上限。Android 与 iOS 仅托管一次执行会话 |
 | `core/overlay_engine.dart`、Android 原生服务 | 在其他应用的上层处理手势、录音与播放，经同一聊天控制器保存结果 | 系统窗口与手势留给 Android，共享对话和模型配置 |
 | `tasks/` | 聊天与任务页共用一次、每日、每周调度，记录执行和通知 | 同一到期时间只允许一个执行记录。iOS 后台模型执行时间由系统决定 |
 | `core/asset_bundle.dart` | 本机资产与普通目录的双向映射 | 新类别增加可读条目和导入预览，破坏兼容的变更升级版本号 |
 | `core/token_usage.dart` | 保存服务回报的请求级输入、输出和明细 | 新提供商落实它的计数口径，无法取得完整回报时保留未知 |
 
-Orb 借鉴了桌面 Harness 的工作方式。模型可以先查某个文件、按原文做一次替换，再用工具核实结果。手动启用的技能可以带说明和参考文件。需要访问另一项服务时，用户可通过 MCP 连接选择允许调用的只读工具。Android 和 iOS 都在应用沙盒里执行这些操作。当前发版未提供通用终端、任意插件进程或桌面级后台常驻服务。[DeepSeek Harness](https://www.deepseek.com/zh/harness/) · [Agent Skills](https://agentskills.io/specification) · [Android 应用沙盒](https://source.android.com/docs/security/app-sandbox)
+Orb 借鉴了桌面 Harness 的工作方式。模型可以先查某个文件、按原文做一次替换，再用工具核实结果。手动启用的技能可以带说明和参考文件。需要访问另一项服务时，用户可通过 MCP 连接选择授权工具。前台聊天逐次展示可写工具的服务和参数，后台仅能调用已授权的只读工具。Android 和 iOS 都在应用沙盒里执行这些操作。当前发版未提供通用终端、任意插件进程或桌面级后台常驻服务。[DeepSeek Harness](https://www.deepseek.com/zh/harness/) · [Agent Skills](https://agentskills.io/specification) · [Android 应用沙盒](https://source.android.com/docs/security/app-sandbox)
 
 ## 手机工作区程序
 
-支持执行的 Flutter 引擎会向本轮模型提供 `workspace_run`。Orb 沿用现有工作文件、工具循环和聊天回执。入口是已保存的 `.c` 文件；`stdin_path` 和 `input_paths` 由宿主在入口目录中解析，只有显式选中的文件会交给程序。程序可用随包的标准头文件和 C 库，例如通过 `fgets` 读取一行、通过 `printf` 输出文本、通过 `fopen` 读取已选文件。编译器和链接器只在临时内存文件系统中工作，运行阶段另建文件系统。支持范围见 [xcc 的 WebAssembly 工具链](https://github.com/tyfkda/xcc#webassembly)。
+支持执行的 Flutter 引擎会向本轮模型提供 `workspace_run`。Orb 沿用现有工作文件、工具循环和聊天回执。入口可以是已保存的 `.c` 或 `.js` 文件。`stdin_path` 和 `input_paths` 由宿主在入口目录中解析，只有显式选中的文件会交给程序。程序可用随包的标准头文件和 C 库，例如通过 `fgets` 读取一行、通过 `printf` 输出文本、通过 `fopen` 读取已选文件。同一项目的额外 C 翻译单元可以通过 `source_paths` 指定。JavaScript 使用随包的 QuickJS Wasm 解释器，`readText` 可用入口相对名或完整工作区名读取同一个显式选定的文件，`readStdin` 读取标准输入，`console.log` 生成标准输出。编译器和链接器只在临时内存文件系统中工作，运行阶段另建文件系统。支持范围见 [xcc 的 WebAssembly 工具链](https://github.com/tyfkda/xcc#webassembly)。
 
 两端从 App 内置资源启动同一个编译器和 Worker。每个模块最多使用 64 MiB 线性内存，编译和运行各有 8 秒时限。点击聊天的停止按钮会终止当前运行。标准输出和标准错误各限 64 KiB；标准输出和错误预览随工具结果发送至本轮选择的模型，每项最多 8,000 个字符，历史回执各保留最多 1,000 个字符。成功退出后可将完整标准输出保存为工作文件，覆盖已有内容沿用工作区的哈希检查。源码和文本产物可随原有资产包导出。
 

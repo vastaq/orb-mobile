@@ -17,6 +17,7 @@ void main() {
       final args = <String, dynamic>{
         'title': turn,
         'body': 'review notes',
+        'kind': 'prompt',
         'frequency': 'weekly',
         'due': '${now.year + 1}-05-12T20:00',
       };

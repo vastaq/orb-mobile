@@ -122,7 +122,13 @@ void main() {
         // iOS chooses when to grant discretionary background time. Exercise the
         // same public “run now” action as the task details page on that platform.
         // Android waits for the scheduled OS worker, including its cold isolate.
-        if (Platform.isIOS) await tasks.runNow(background);
+        if (Platform.isIOS) {
+          await tasks.runNow(background);
+        } else {
+          debugPrint(
+            'READY_TO_BACKGROUND_MODEL id=${background.id} due=${background.due}',
+          );
+        }
         final elapsed = Stopwatch()..start();
         TaskRun? delivery;
         while (elapsed.elapsed < const Duration(seconds: 100)) {

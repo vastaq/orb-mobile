@@ -157,6 +157,28 @@ void main() {
     }
     expect((await workspace.read(outside.path))?.text, outside.text);
     expect(await workspace.read(output), isNull);
+    final helper = WorkFile(
+      '$project/lib/part.c',
+      'int answer(void){return 42;}',
+    );
+    final linkedEntry = WorkFile(
+      '$project/linked.c',
+      '#include <stdio.h>\nint answer(void); int main(){printf("%d",answer());return 0;}',
+    );
+    await workspace.save(helper);
+    await workspace.save(linkedEntry);
+    try {
+      final linked = await runStoredProgram(workspace, {
+        'path': linkedEntry.path,
+        'source_paths': ['./lib/part.c'],
+      });
+      expect(linked['exit_code'], 0);
+      expect(linked['stdout'], '42');
+    } finally {
+      await workspace.remove(linkedEntry.path);
+      await workspace.remove(helper.path);
+    }
+
     final stalled = await runStoredProgram(workspace, {
       'path': looping.path,
       'output_path': output,
