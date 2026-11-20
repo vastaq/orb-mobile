@@ -27,6 +27,24 @@ class ChatOptions {
   final RunChatTool? onTool;
 }
 
+// Flash accepts local functions with URL reading, but rejects functions and
+// hosted web search together. Let the model request the hosted search separately.
+const deepSeekSearch = ChatTool(
+  name: 'search_public_web',
+  description: 'Look up current public information online when needed. Supply only the public search question. Use the returned answer and cited sources.',
+  parameters: {
+    'type': 'object',
+    'properties': {
+      'query': {'type': 'string'},
+    },
+    'required': ['query'],
+    'additionalProperties': false,
+  },
+);
+
+bool delegatesDeepSeekSearch(ModelConfig config, ChatOptions options) =>
+    config.supportsDeepSeekTools && options.search && options.tools.isNotEmpty;
+
 class ChatDelta {
   const ChatDelta({this.text = '', this.thinking = '', this.metadata});
 
@@ -161,7 +179,8 @@ Map<String, Object?> buildWireRequest(
   final messages = [for (final m in history) _message(config, m)];
   final base = <String, Object?>{'model': config.model.trim(), 'stream': true};
   final functions = <Map<String, dynamic>>[];
-  for (final tool in options.tools) {
+  final delegateSearch = delegatesDeepSeekSearch(config, options);
+  for (final tool in [...options.tools, if (delegateSearch) deepSeekSearch]) {
     final definition = {'name': tool.name, 'description': tool.description};
     functions.add(switch (service) {
       ModelService.claude => {...definition, 'input_schema': tool.parameters},
@@ -231,7 +250,8 @@ Map<String, Object?> buildWireRequest(
         if (options.search || options.readLinks)
           'tools': [
             ...functions,
-            if (options.search) {'type': 'deepseek_web_search'},
+            if (options.search && !delegateSearch)
+              {'type': 'deepseek_web_search'},
             if (options.readLinks) {'type': 'deepseek_read_url'},
           ],
         if (options.suggestTitle) 'title': {'enabled': true},

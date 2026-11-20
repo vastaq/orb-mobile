@@ -41,9 +41,9 @@ Orb 已能在手机工作区写程序、运行并保存结果。在三款开源�
 
 六道编码题首轮的共同模型为 deepseek-flash。按手机 xcc 运行，Orb 为 4/6，Aider 为 3/6，OpenCode 和 Cline 各为 5/6。使用隔离的宿主标准 C 编译器和相同隐藏输入重判完全相同的提交后，分别为 4/6、4/6、6/6、6/6。差别来自班次时长题：两个桌面提交用了 sscanf，另一个用了 ferror。Orb 的两项失败是颜色样例没有落成文件，以及最终议程附带了被取消的活动名。总分要求一道题的全部检查通过。
 
-引入 QuickJS 后，用同一台 Android 模拟器、相同输入和评分器重跑。六道共同题，DeepSeek 和 OpenAI 各完成 5/6；两者都正确合并了保留活动的时间和场地，但又在输出文件中附注了已取消活动，违反「仅列保留活动」。库存对账题另计，DeepSeek 通过，OpenAI 首次使用该题时未通过全部检查。工作区工具便于核实产物，模型每次选取的解法仍有差异。
+引入 QuickJS 后（`965c60d`），用同一台 Android 模拟器、相同输入和评分器重跑。六道共同题，DeepSeek 和 OpenAI 各完成 5/6；两者都正确合并了保留活动的时间和场地，但又在输出文件中附注了已取消活动，违反「仅列保留活动」。库存对账题另计，DeepSeek 通过，OpenAI 首次使用该题时未通过全部检查。工作区工具便于核实产物，模型每次选取的解法仍有差异。
 
-最后冻结一题家庭账单整理，要求从两张合成 CSV 交付可核实的月度分类结果。所有参赛者仅取得同一条中文请求与初始文件，宿主在它们提交末态后分别检查输入保留、输出文件、分类、金额和总数。Orb + OpenAI 首次 6/6 项通过。Orb + DeepSeek 首次仅保留了原输入，工具回执显示多次运行失败，未产生交付 CSV。首次脚本使用已授权的完整工作区路径，运行器当时只接受入口相对名。修复后，Android 直接重放原脚本通过了全部 6 项检查；之后让 DeepSeek 和 OpenAI 各用全新会话从头完成同一题，两份新月报均通过 6 项检查。Aider、OpenCode、Cline、Goose 和 Hermes 提交的首份月报也各通过 6 项。每个组合每轮只采一次，原脚本回放与新会话复测单独计分。
+最后冻结一题家庭账单整理，要求从两张合成 CSV 交付可核实的月度分类结果。所有参赛者仅取得同一条中文请求与初始文件，宿主在它们提交末态后分别检查输入保留、输出文件、分类、金额和总数。Orb + OpenAI 首次 6/6 项通过。Orb + DeepSeek 首次仅保留了原输入，工具回执显示多次运行失败，未产生交付 CSV。首次脚本使用已授权的完整工作区路径，运行器当时只接受入口相对名。路径修复后（`4425f54`），Android 直接重放原脚本通过了全部 6 项检查；之后让 DeepSeek 和 OpenAI 各用全新会话从头完成同一题，两份新月报均通过 6 项检查。Aider、OpenCode、Cline、Goose 和 Hermes 提交的首份月报也各通过 6 项。OpenClaw 在此题的独立安装中缺少运行依赖，未向模型发出请求，记为未参评。每个组合每轮只采一次，原脚本回放与新会话复测单独计分。
 
 ## 开源通用助手的实际对照
 
@@ -57,6 +57,14 @@ Orb 已能在手机工作区写程序、运行并保存结果。在三款开源�
 | Goose 1.60.2 | 通过，内置 memory 扩展 | 内置 Streamable HTTP 扩展准确写入 1 次 | 常驻桌面会话得到正确文件和调度记录。请求一次性任务后，年度 cron 条目仍保留，测试结束时手动移除 |
 
 Goose 首次登记遇到测试主机休眠期间的供应商断连，恢复网络后重新指定了未来时间。开放协议的笔记验收使用合成服务，消费端原生日历、账号连接目录、语音唤醒与桌面网关都有独立的使用条件。[OpenClaw MCP](https://docs.openclaw.ai/tools/mcp) · [OpenClaw 调度](https://docs.openclaw.ai/automation/cron-jobs) · [Goose 扩展](https://goose-docs.ai/docs/getting-started/using-extensions/) · [Goose 调度](https://goose-docs.ai/docs/guides/goose-cli-commands/)
+
+## 与最新聊天设置一起使用
+
+合入默认开启按需搜索的聊天设置后，在 Android 模拟器上重做 DeepSeek 测试。官方 Flash 接口能分别接受本地函数或网页搜索，本地函数搭配官方读链接也成功，但把网页搜索和本地函数放在同一个请求中会得到 HTTP 400。
+
+Orb 现由模型按需要提出搜索问题，用独立的官方请求检索，拿到来源后再接着用本机工具。搜索子请求只接收本次检索问题及语言、地区等设置。一次新会话要求查询 Dart 官方文档并将命令和出处写入工作区，实际文件含正确命令 `dart pub get` 与官方 HTTPS 链接，聊天保留了 6 个来源。已接受的搜索调用按请求计入模型用量。
+
+在同一套 Android 默认设置下，真实 DeepSeek 两次生成了数值正确、末尾各多一行空白的表格，均未通过逐字节断言。补充 JavaScript 换行写法的工具说明后，保持原题与判分不变，首次运行和换数据复跑都严格匹配。最终 Flutter 分析及 86 项单元和组件测试通过。
 
 ## 本机复现
 
@@ -80,3 +88,10 @@ python3 tool/calendar_benchmark.py --device "$DEVICE" seed
 冷启动记忆用例 `integration_test/cold_memory_test.dart` 需在同一专用模拟器上运行两次，并在两次运行之间执行 `adb -s "$DEVICE" shell am force-stop studio.orb.orb_mobile`。两次均使用 `--no-uninstall --dart-define=ORB_COLD_MEMORY=true --dart-define=ORB_DEEPSEEK_PORT=18961`。用例会核实两个进程 ID 不同并清理合成记忆和测试对话。
 
 外部笔记用例先运行 `python3 tool/product_benchmark/notes_service.py --state "$NEW_TEMP_FILE" --port 18965`，其中状态文件须尚未存在。转发 18965 后运行 `integration_test/personal_notes_chat_test.dart`，传入 `ORB_NOTES_PORT=18965` 和 `ORB_DEEPSEEK_PORT=18961`。开发机可通过服务的 `/state` 核对最终内容和写入次数。
+
+使用默认搜索设置复现「查询公开信息后写入手机文件」，先启动并反向转发 DeepSeek 代理，再运行以下命令。用例会核对本地文件与检索返回的来源。
+
+```sh
+flutter test -d "$DEVICE" integration_test/deepseek_search_workspace_test.dart \
+  --dart-define=ORB_LIVE_WEB_WORKSPACE=true --dart-define=ORB_LIVE_PROGRAM_PORT=18961
+```

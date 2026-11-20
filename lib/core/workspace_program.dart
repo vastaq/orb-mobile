@@ -14,7 +14,9 @@ const workspaceProgramTool = ChatTool(
       'In JavaScript readText accepts the selected input’s workspace path ("project/data.tsv") '
       'or its path relative to the entry ("./data.tsv"). Use readStdin() '
       'for the supplied stdin or stdin_path, and console.log(text) for stdout. '
-      'Each console.log ends with a newline. No Node, browser, imports, or network. '
+      "For a newline-terminated table use console.log(rows.join('\\n')) once; "
+      'console.log appends the final newline, so omit a trailing newline or extra blank log. '
+      'No Node, browser, imports, or network. '
       'The entry path is workspace-relative. For a header such as #include "include/config.h", '
       'pass input_paths: ["./include/config.h"]. All ./ paths resolve under the entry folder. '
       'Use source_paths for any additional .c files to compile and link; use '

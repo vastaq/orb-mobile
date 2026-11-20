@@ -73,6 +73,23 @@ List<Json> completionsCall({String id = 'a', String name = 'schedule_list'}) =>
       chunk({}, stop: 'tool_calls', usage: counts),
     ];
 
+Json requestSearch() => chunk(
+  {
+    'tool_calls': [
+      {
+        'index': 0,
+        'id': 'search-one',
+        'function': {
+          'name': 'search_public_web',
+          'arguments': '{"query":"public notice"}',
+        },
+      },
+    ],
+  },
+  stop: 'tool_calls',
+  usage: counts,
+);
+
 void main() {
   late HttpServer server;
   late StreamingChatProvider provider;
@@ -117,6 +134,155 @@ void main() {
   }
 
   const output = '{"ids":["31","32"]}';
+
+  test(
+    'Flash alternates hosted search and local tools and retains citations',
+    () async {
+      const ref = {'url': 'https://example.org/notice', 'title': 'Notice'};
+      serve(
+        (round) => switch (round) {
+          1 => [requestSearch()],
+          2 => [
+            chunk(
+              {
+                'content': 'Search result',
+                'annotations': [ref],
+              },
+              stop: 'stop',
+              usage: counts,
+            ),
+          ],
+          3 => completionsCall(),
+          _ => [
+            chunk({'content': 'Done'}, stop: 'stop', usage: counts),
+          ],
+        },
+      );
+      final result = await run(ModelService.deepSeek, execute).toList();
+      expect(requests, hasLength(4));
+      expect(requests[1]['tools'], [
+        {'type': 'deepseek_web_search'},
+        {'type': 'deepseek_read_url'},
+      ]);
+      expect(
+        (requests[1]['messages'] as List).last['content'],
+        'public notice',
+      );
+      final receipt = jsonDecode(
+        (requests[2]['messages'] as List).last['content'],
+      );
+      expect(receipt, {
+        'answer': 'Search result',
+        'citations': [ref],
+      });
+      expect((requests[3]['messages'] as List).last['content'], output);
+      expect(result.map((d) => d.text).join(), 'Done');
+      expect(result.last.metadata?['citations'], [ref]);
+      expect(result.last.metadata?['usage']?['input'], 40);
+      expect(usages, hasLength(4));
+    },
+  );
+
+  for (final interrupted in [true, false]) {
+    test(
+      'Flash search reports missing evidence, interrupted=$interrupted',
+      () async {
+        serve(
+          (round) => switch (round) {
+            1 => [requestSearch()],
+            2 => [
+              chunk(
+                {'content': 'An uncited model answer'},
+                stop: interrupted ? null : 'stop',
+                usage: interrupted ? null : counts,
+              ),
+            ],
+            _ => [
+              chunk(
+                {'content': 'No verified result'},
+                stop: 'stop',
+                usage: counts,
+              ),
+            ],
+          },
+        );
+        final result = await run(ModelService.deepSeek, execute).toList();
+        final receipt = jsonDecode(
+          (requests.last['messages'] as List).last['content'],
+        );
+        expect(receipt['error'], contains(interrupted ? '中断' : '网页来源'));
+        expect(receipt.containsKey('answer'), isFalse);
+        expect(
+          result.last.metadata?.containsKey('usage') ?? false,
+          !interrupted,
+        );
+        expect(usages, hasLength(3));
+        expect(usages[1] == null, interrupted);
+      },
+    );
+  }
+
+  test('stopping a hosted search prevents later tool calls', () async {
+    final started = Completer<void>();
+    server.listen((req) async {
+      requests.add(jsonDecode(await utf8.decoder.bind(req).join()) as Map);
+      if (requests.length == 1) {
+        await respond(req, [requestSearch()]);
+      } else {
+        req.response.headers.contentType = ContentType('text', 'event-stream');
+        req.response.write(': search started\n\n');
+        await req.response.flush();
+        started.complete();
+      }
+    });
+    final result = run(ModelService.deepSeek, execute).toList();
+    await started.future.timeout(const Duration(seconds: 3));
+    provider.stop();
+    await result.timeout(const Duration(seconds: 3));
+    expect(requests, hasLength(2));
+  });
+
+  test('disabling search omits both hosted and delegated search', () async {
+    serve(
+      (_) => [
+        chunk({'content': 'local'}, stop: 'stop', usage: counts),
+      ],
+    );
+    await provider
+        .replyRich(
+          _Loopback(ModelService.deepSeek, server.port),
+          question,
+          ChatOptions(search: false, tools: [tool], onTool: execute),
+        )
+        .drain<void>();
+    final defs = requests.single['tools'] as List;
+    expect(
+      [for (final t in defs) t['function']?['name'] ?? t['type']],
+      ['schedule_list', 'deepseek_read_url'],
+    );
+  });
+
+  test('hosted search preserves full workspace verification budget', () async {
+    serve((round) {
+      if (round == 1) return [requestSearch()];
+      if (round == 2) {
+        return [chunk({
+          'content': 'Verified',
+          'annotations': [{'url': 'https://example.org/v', 'title': 'v'}],
+        }, stop: 'stop', usage: counts)];
+      }
+      if (round < 10) return completionsCall(id: 'ws-$round', name: 'workspace_run');
+      return [chunk({'content': 'Done'}, stop: 'stop', usage: counts)];
+    });
+    var runs = 0;
+    await provider.replyRich(
+      _Loopback(ModelService.deepSeek, server.port), question,
+      ChatOptions(tools: [const ChatTool(name: 'workspace_run', description: 'Run a program', parameters: {})],
+        onTool: (_) async => {'run': ++runs}),
+    ).drain<void>();
+    expect(runs, 7);
+    expect(requests, hasLength(10));
+  });
 
   const workspaceRun = ChatTool(
     name: 'workspace_run', description: 'Run workspace program', parameters: {},
@@ -178,12 +344,13 @@ void main() {
             'parameters': tool.parameters,
           },
         });
-        expect(definitions.skip(1), [
-          if (service == ModelService.deepSeek) ...[
-            {'type': 'deepseek_web_search'},
-            {'type': 'deepseek_read_url'},
-          ],
-        ]);
+        if (service == ModelService.deepSeek) {
+          expect(definitions[1]['function']['name'], 'search_public_web');
+          expect(definitions[2], {'type': 'deepseek_read_url'});
+          expect(definitions, hasLength(3));
+        } else {
+          expect(definitions, hasLength(1));
+        }
         expect(requests.first.containsKey('tool_choice'), isFalse);
         final messages = requests.last['messages'] as List;
         expect(messages[messages.length - 2]['tool_calls'], [
