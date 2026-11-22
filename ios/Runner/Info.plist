@@ -30,6 +30,10 @@
 	<dict><key>NSAllowsLocalNetworking</key><true/></dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>连接你在模型设置中指定的局域网服务。</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>读取你选择的日历，并在你确认后创建、修改或删除日程。</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>读取你选择的日历，并在你确认后创建、修改或删除日程。</string>
 	<key>NSCameraUsageDescription</key><string>拍摄你选择发送给模型的图片。</string>
     <key>NSPhotoLibraryUsageDescription</key><string>选择一张图片用于聊天或识别文字。</string>
     <key>NSMicrophoneUsageDescription</key><string>录制你按下语音输入后所说的话。</string>

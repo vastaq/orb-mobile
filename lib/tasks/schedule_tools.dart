@@ -18,6 +18,7 @@ class ScheduleTools {
   final DateTime Function() _now;
   Future<TaskService>? _service;
   int _createIndex = 0;
+  bool _askedForNotifications = false;
   final _creationSources = <String, String>{};
 
   static const _id = {
@@ -56,7 +57,7 @@ class ScheduleTools {
   static const definitions = <ChatTool>[
     ChatTool(
       name: 'schedule_create',
-      description: 'Create a local reminder or scheduled model prompt at the user’s request. Resolve relative dates in the device time zone. Ask for missing timing or unsupported recurrence. Return the saved id and next occurrence.',
+      description: 'Create a local reminder or scheduled model prompt at the user’s request. Resolve relative dates in the device time zone. Ask for missing timing or unsupported recurrence. A reminder requires system notifications. If permission is unavailable, explain the result and wait for the user. Return the saved id and next occurrence on success.',
       parameters: {
         'type': 'object',
         'properties': _fields,
@@ -143,6 +144,8 @@ class ScheduleTools {
           };
         case 'schedule_create':
           final draft = _draft(args, now);
+          final unavailable = await _reminderPermission(service, draft);
+          if (unavailable != null) return unavailable;
           final signature = jsonEncode(draft.values(1));
           final source =
               _creationSources[signature] ?? '$turnKey/create/$_createIndex';
@@ -225,6 +228,10 @@ class ScheduleTools {
       return _saved(service, task);
     }
     final draft = _draft(args, now, previous: task, enabled: enabled);
+    if (action == 'resume' || draft.kind != task.kind) {
+      final unavailable = await _reminderPermission(service, draft);
+      if (unavailable != null) return unavailable;
+    }
     final result = await service.save(draft);
     return _saved(service, result);
   }
@@ -266,7 +273,7 @@ class ScheduleTools {
           ).nextAfter(now) ??
           due;
     }
-    if (enabled && !due.isAfter(now) && previous != null) {
+    if (enabled && !due.isAfter(now)) {
       throw const FormatException('下一次执行时间必须在将来。');
     }
     return OrbTask(
@@ -279,6 +286,25 @@ class ScheduleTools {
       due: due,
       enabled: enabled,
     );
+  }
+
+  Future<Map<String, dynamic>?> _reminderPermission(
+    TaskService service,
+    OrbTask task,
+  ) async {
+    if (!task.enabled || task.kind != TaskKind.reminder) return null;
+    final granted = await service.reminderNotificationPermission(
+      mayAsk: !_askedForNotifications,
+    );
+    _askedForNotifications = true;
+    if (granted == true) return null;
+    return {
+      'ok': false,
+      'notifications_enabled': ?granted,
+      'error': granted == false
+          ? 'Orb 通知尚未开启，本次提醒没有安排。请在手机设置中允许 Orb 通知，然后再试。'
+          : '无法确认系统通知权限，本次提醒没有安排。请打开 Orb，检查通知设置后再试。',
+    };
   }
 
   static Future<Map<String, dynamic>> _saved(

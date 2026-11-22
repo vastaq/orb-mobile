@@ -51,9 +51,11 @@ class StreamingChatProvider implements RichChatProvider {
   recordUsage;
   final String? usagePurpose;
   HttpClient? _client;
+  StreamingChatProvider? _activeSearch;
 
   @override
   void stop() {
+    _activeSearch?.stop();
     final client = _client;
     _client = null;
     client?.close(force: true);
@@ -81,13 +83,86 @@ class StreamingChatProvider implements RichChatProvider {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
     _client = client;
-    final allowed = {for (final tool in options.tools) tool.name};
+    final delegateSearch = delegatesDeepSeekSearch(config, options);
+    final allowed = {
+      for (final tool in options.tools) tool.name,
+      if (delegateSearch) deepSeekSearch.name,
+    };
     final completed = <String, (PendingToolCall, ChatToolReply)>{};
     var executed = 0;
+    var workspaceOnly = true;
     final totals = <String, int>{};
     var allUsageKnown = true;
     final citations = <String, dynamic>{};
     String? title;
+    void account(Map<String, int>? usage) {
+      if (usage == null) {
+        allUsageKnown = false;
+        return;
+      }
+      for (final field in usage.entries) {
+        totals[field.key] = (totals[field.key] ?? 0) + field.value;
+      }
+    }
+
+    Future<Map<String, dynamic>> runTool(ChatToolCall call) async {
+      if (!delegateSearch || call.name != deepSeekSearch.name) {
+        return options.onTool!(call);
+      }
+      final query = call.arguments['query'];
+      if (query is! String || query.trim().isEmpty || query.length > 2000) {
+        throw const OrbException('请提供不超过 2000 字符的公开搜索问题。');
+      }
+      final search = StreamingChatProvider(
+        usagePurpose: usagePurpose ?? '网页搜索',
+        recordUsage: (config, purpose, usage) async {
+          // An accepted stream can disconnect before it returns token counts.
+          // Include that uncertainty even when the caller disables usage logs.
+          account(usage);
+          if (usagePurpose != null) await recordUsage(config, purpose, usage);
+        },
+      );
+      _activeSearch = search;
+      try {
+        final text = StringBuffer();
+        Map<String, dynamic>? metadata;
+        await for (final delta in search.replyRich(
+          config,
+          [
+            {
+              'role': 'system',
+              'content': 'Search the public web to answer this question. Return a concise answer with sources.',
+            },
+            {'role': 'user', 'content': query.trim()},
+          ],
+          ChatOptions(
+            search: true,
+            readLinks: options.readLinks,
+            thinking: options.thinking,
+            language: options.language,
+            region: options.region,
+            safetyCheck: options.safetyCheck,
+          ),
+        )) {
+          text.write(delta.text);
+          if (delta.metadata != null) metadata = delta.metadata;
+        }
+        final refs = metadata?['citations'] as List? ?? [];
+        if (refs.isEmpty) {
+          throw const OrbException('本次联网搜索没有取得可核对的网页来源，请勿将结果作为已查证的信息。');
+        }
+        for (final ref in refs.whereType<Map>()) {
+          if (ref['url'] case final String url) citations[url] = ref;
+        }
+        return {
+          'answer': String.fromCharCodes(text.toString().runes.take(8000)),
+          'citations': refs.take(12).toList(),
+        };
+      } finally {
+        if (identical(_activeSearch, search)) _activeSearch = null;
+      }
+    }
+
     Future<HttpClientResponse> post(Map<String, Object?> payload) async {
       final request = await client.postUrl(config.endpoint);
       request.followRedirects = false;
@@ -241,13 +316,7 @@ class StreamingChatProvider implements RichChatProvider {
           }
         }
         if (!identical(_client, client)) return;
-        if (counter.value case final values?) {
-          for (final field in values.entries) {
-            totals[field.key] = (totals[field.key] ?? 0) + field.value;
-          }
-        } else {
-          allUsageKnown = false;
-        }
+        account(counter.value);
         final metadata = events.metadata;
         if (metadata?['title'] case final String value) title = value;
         if (metadata?['citations'] case final List refs) {
@@ -271,7 +340,18 @@ class StreamingChatProvider implements RichChatProvider {
         if (options.onTool == null || options.tools.isEmpty) {
           throw const OrbException('当前对话没有启用本地工具。');
         }
-        if (round >= 6 || executed + calls.length > 16) {
+        workspaceOnly =
+            workspaceOnly &&
+            calls.every(
+              (call) =>
+                  allowed.contains(call.name) &&
+                  (call.name.startsWith('workspace_') ||
+                      delegateSearch && call.name == deepSeekSearch.name),
+            );
+        // Reading, editing and verifying a file often need separate model turns.
+        // Keep the existing action budget for these, and the shorter turn limit
+        // for tasks that use a scheduler, MCP server or another tool.
+        if ((!workspaceOnly && round >= 6) || executed + calls.length > 16) {
           throw const OrbException('已达到本轮工具调用上限，已执行的操作仍然有效。');
         }
         final replies = <ChatToolReply>[];
@@ -281,8 +361,7 @@ class StreamingChatProvider implements RichChatProvider {
           if (cached != null && cached.$1 != call) {
             throw const OrbException('服务重复使用了同一工具调用编号。');
           }
-          final reply =
-              cached?.$2 ?? await _runTool(call, allowed, options.onTool!);
+          final reply = cached?.$2 ?? await _runTool(call, allowed, runTool);
           completed[call.id] = (call, reply);
           replies.add(reply);
         }

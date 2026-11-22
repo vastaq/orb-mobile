@@ -34,7 +34,42 @@ class _OrbAppState extends State<OrbApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    controller.reviewAction = reviewAction;
     unawaited(start());
+  }
+
+  Future<bool> reviewAction(
+    String title,
+    String details,
+    String confirmLabel,
+  ) async {
+    final page = navigator.currentState?.overlay?.context;
+    if (!mounted ||
+        page == null ||
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return false;
+    }
+    final approved = await showDialog<bool>(
+      context: page,
+      builder: (context) => AlertDialog(
+        scrollable: true,
+        title: Text(title),
+        content: Text(details),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return mounted &&
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed &&
+        approved == true;
   }
 
   Future<void> start() async {
@@ -93,6 +128,7 @@ class _OrbAppState extends State<OrbApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    controller.reviewAction = null;
     if (widget.controller == null) controller.dispose();
     super.dispose();
   }

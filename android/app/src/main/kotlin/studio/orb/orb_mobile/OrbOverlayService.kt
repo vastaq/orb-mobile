@@ -196,6 +196,7 @@ class OrbOverlayService : Service() {
                     loader.startInitialization(this)
                     loader.ensureInitializationComplete(this, null)
                     val worker = FlutterEngine(applicationContext)
+                    worker.plugins.add(WorkspaceProgramPlugin())
                     engine = worker
                     channel =
                         MethodChannel(

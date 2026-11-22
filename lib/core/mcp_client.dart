@@ -42,16 +42,23 @@ String _shortText(String text, int length) =>
     String.fromCharCodes(text.runes.take(length));
 
 class McpRemoteTool {
-  const McpRemoteTool(this.name, this.description, this.schema, this.readOnly);
+  const McpRemoteTool(
+    this.name,
+    this.description,
+    this.schema,
+    this.readOnly, [
+    this.hints = const {},
+  ]);
   final String name, description;
   final Map<String, dynamic> schema;
   final bool readOnly;
+  final Map<String, bool> hints;
   String get signature => _hash(jsonEncode(_stable(toJson())));
   Map<String, dynamic> toJson() => {
     'name': name,
     'description': description,
     'inputSchema': schema,
-    'annotations': {'readOnlyHint': readOnly},
+    'annotations': {'readOnlyHint': readOnly, ...hints},
   };
   static McpRemoteTool parse(Map data) {
     final name = data['name'], schema = data['inputSchema'];
@@ -73,8 +80,20 @@ class McpRemoteTool {
       _shortText((data['description'] ?? name).toString(), 1600),
       Map<String, dynamic>.from(schema),
       safe,
+      _extraHints(annotations),
     );
   }
+
+  static Map<String, bool> _extraHints(Object? value) => value is Map
+      ? {
+          for (final key in [
+            'destructiveHint',
+            'openWorldHint',
+            'idempotentHint',
+          ])
+            if (value[key] is bool) key: value[key] as bool,
+        }
+      : {};
 
   String alias(String connection) {
     final readable = name.replaceAll(RegExp('[^A-Za-z0-9_-]'), '_');
@@ -280,7 +299,10 @@ class McpClient {
   }
   final Uri endpoint;
   final String token;
-  Future<T> _using<T>(Future<T> Function(_Session s) operation) async {
+  Future<T> _using<T>(
+    Future<T> Function(_Session s) operation, {
+    bool retryExpired = true,
+  }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       final s = _Session(endpoint, token);
       try {
@@ -295,7 +317,9 @@ class McpClient {
           },
         );
       } on _Expired {
-        if (attempt == 1) throw const FormatException('MCP 会话已失效，请重试。');
+        if (!retryExpired || attempt == 1) {
+          throw const FormatException('MCP 会话已失效，请核对服务端状态。');
+        }
       } on http.ClientException {
         throw const FormatException('无法连接 MCP 服务。');
       } on SocketException {
@@ -312,12 +336,12 @@ class McpClient {
     McpRemoteTool approved,
     Map<String, dynamic> args, {
     bool Function()? stillAllowed,
+    bool confirmedWrite = false,
   }) => _using((s) async {
     final tools = await s.catalog();
     final current = tools.where((t) => t.name == approved.name).firstOrNull;
-    if (!approved.readOnly ||
+    if ((!approved.readOnly && !confirmedWrite) ||
         current == null ||
-        !current.readOnly ||
         current.signature != approved.signature ||
         stillAllowed?.call() == false) {
       throw const FormatException('工具被停用或声明已更改。请在设置中重新检查并选择。');
@@ -360,7 +384,7 @@ class McpClient {
         'text': _shortText(jsonEncode(structured), 12000),
       if (text.runes.length > 12000 || jsonSize > 12000) 'truncated': true,
     };
-  });
+  }, retryExpired: approved.readOnly);
 }
 
 class McpConnection {
@@ -483,19 +507,22 @@ class McpConnections {
     final known = {for (final t in old.catalog) t.name: t.signature};
     final allowed = {
       for (final t in tools)
-        if (t.readOnly &&
-            old.allowed.contains(t.name) &&
-            t.signature == known[t.name])
+        if (old.allowed.contains(t.name) && t.signature == known[t.name])
           t.name,
     };
     _save(McpConnection(id, old.name, old.origin, tools, allowed));
   }
 
-  void allow(String id, String tool, bool enabled) {
+  void allow(
+    String id,
+    String tool,
+    bool enabled, {
+    bool permitWrites = false,
+  }) {
     final row = get(id);
     if (row == null) throw const FormatException('连接已移除。');
     final t = row.catalog.where((t) => t.name == tool).firstOrNull;
-    if (t == null || enabled && !t.readOnly) {
+    if (t == null || enabled && !t.readOnly && !permitWrites) {
       throw const FormatException('仅可启用服务声明为只读的工具。');
     }
     final next = Set<String>.of(row.allowed);
@@ -513,29 +540,49 @@ class McpConnections {
     await _write(id, null);
   }
 
-  List<ChatTool> get tools => [
+  List<ChatTool> get tools => toolsForTurn();
+  List<ChatTool> toolsForTurn({bool interactive = false}) => [
     for (final c in list())
       for (final t in c.catalog)
-        if (t.readOnly && c.allowed.contains(t.name))
+        if ((t.readOnly || interactive) && c.allowed.contains(t.name))
           ChatTool(
             name: t.alias(c.id),
-            description: '${c.name}: ${t.description}',
+            description:
+                '${c.name}: ${t.description}${t.readOnly ? '' : ' (requires user confirmation each time)'}',
             parameters: t.schema,
           ),
   ];
   bool owns(String name) => name.startsWith('mcp_');
-  Future<Map<String, dynamic>> execute(ChatToolCall call) async {
+  Future<Map<String, dynamic>> execute(
+    ChatToolCall call, {
+    ReviewAction? review,
+    bool Function()? active,
+  }) async {
     for (final c in list()) {
       for (final t in c.catalog) {
-        if (t.readOnly &&
+        if ((t.readOnly || review != null) &&
             c.allowed.contains(t.name) &&
             t.alias(c.id) == call.name) {
+          if (!t.readOnly) {
+            final details = [
+              c.name,
+              c.origin,
+              t.name,
+              const JsonEncoder.withIndent('  ').convert(call.arguments),
+            ].join('\n\n');
+            if (active?.call() == false ||
+                !await review!('允许工具更改数据？', details, '允许这次操作')) {
+              throw const FormatException('用户已取消此次工具操作。');
+            }
+          }
           return (await _client(c.id)).call(
             t,
             call.arguments,
+            confirmedWrite: !t.readOnly && review != null,
             stillAllowed: () {
               final row = get(c.id);
-              return row != null &&
+              return (t.readOnly || active?.call() != false) &&
+                  row != null &&
                   row.allowed.contains(t.name) &&
                   row.catalog.any(
                     (x) => x.name == t.name && x.signature == t.signature,

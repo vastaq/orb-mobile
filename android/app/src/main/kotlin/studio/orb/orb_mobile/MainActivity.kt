@@ -11,12 +11,15 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private var calendar: PersonalCalendar? = null
     private val settings by lazy { OrbOverlaySettings(this) }
     private var overlayApproval: MethodChannel.Result? = null
     private var micApproval: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
+        calendar = PersonalCalendar(this, engine.dartExecutor.binaryMessenger)
+        engine.plugins.add(WorkspaceProgramPlugin())
         MethodChannel(engine.dartExecutor.binaryMessenger, "studio.orb/overlay")
             .setMethodCallHandler { call, result ->
                 try {
@@ -97,6 +100,12 @@ class MainActivity : FlutterActivity() {
             }
     }
 
+    override fun cleanUpFlutterEngine(engine: FlutterEngine) {
+        calendar?.close()
+        calendar = null
+        super.cleanUpFlutterEngine(engine)
+    }
+
     private fun startOverlay() {
         val intent = Intent(this, OrbOverlayService::class.java)
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
@@ -143,6 +152,7 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        calendar?.onRequestPermissionsResult(requestCode, grantResults)
         if (requestCode == MIC) {
             micApproval?.success(settings.micGranted)
             micApproval = null

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
+import '../core/calendar_tools.dart';
 import '../core/orb_controller.dart';
 
 import 'package:share_plus/share_plus.dart';
@@ -727,6 +728,27 @@ class MessageView extends StatelessWidget {
     }
   }
 
+  Future<void> openCalendarEvent(BuildContext context, Map row) async {
+    try {
+      final opened = await CalendarTools.channel.invokeMethod<bool>('open', {
+        'calendarId': row['calendar_id'],
+        'id': row['id'],
+      });
+      if (opened == true) return;
+    } on PlatformException catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message ?? '无法打开这条日程。')));
+      return;
+    } on MissingPluginException {
+      // A transferred conversation may be opened on a different device.
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('无法在当前设备打开这条日程。')));
+    }
+  }
+
   Future<void> openLink(BuildContext context, String? url) async {
     final uri = Uri.tryParse(url ?? '');
     if (uri == null ||
@@ -781,6 +803,19 @@ class MessageView extends StatelessWidget {
           ),
         ),
       );
+    }
+    final calendarEvents = <(String, String), Map>{};
+    for (final row
+        in (message.metadata['localTools'] as List? ?? []).whereType<Map>()) {
+      final calendar = row['calendar_id'], id = row['id'];
+      if (row['ok'] != true || calendar is! String || id is! String) continue;
+      final key = (calendar, id);
+      if (row['name'] == 'calendar_delete') {
+        calendarEvents.remove(key);
+      } else if (row['name'] == 'calendar_create' ||
+          row['name'] == 'calendar_update') {
+        calendarEvents[key] = row;
+      }
     }
     if (message.text.isEmpty && !pending) return const SizedBox.shrink();
     return Column(
@@ -869,6 +904,12 @@ class MessageView extends StatelessWidget {
                     ),
                   ),
             ),
+          ),
+        for (final event in calendarEvents.values)
+          TextButton.icon(
+            onPressed: () => openCalendarEvent(context, event),
+            icon: const Icon(Icons.event_outlined, size: 18),
+            label: Text('查看日程 · ${event['title'] ?? ''}'),
           ),
         if (message.metadata['citations'] case final List refs)
           for (final ref in refs.whereType<Map>())

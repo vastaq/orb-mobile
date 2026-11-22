@@ -6,6 +6,7 @@ import 'chat_provider.dart';
 import 'models.dart';
 import 'memory_harness.dart';
 import 'mobile_harness.dart';
+import 'program_runtime.dart';
 import 'history_transfer.dart';
 import 'turn_context.dart';
 
@@ -25,6 +26,7 @@ class OrbController extends ChangeNotifier {
        _provider = provider ?? StreamingChatProvider(usagePurpose: '对话'),
        _memory = memoryHarness ?? MemoryHarness();
 
+  ReviewAction? reviewAction;
   final OrbStore _store;
   final ChatProvider _provider;
   final MemoryHarness _memory;
@@ -139,6 +141,7 @@ class OrbController extends ChangeNotifier {
   List<OrbMemory> memories = [];
   ModelConfig config = const ModelConfig();
   Completer<void>? _run;
+  ProgramRunControl? _programControl;
   bool _stopped = false;
   bool _disposed = false;
   bool get busy => _run != null;
@@ -314,6 +317,7 @@ class OrbController extends ChangeNotifier {
     }
     final run = Completer<void>();
     _run = run;
+    final programControl = _programControl = ProgramRunControl();
     _stopped = false;
     error = null;
     final isFirst = activeId == null;
@@ -389,6 +393,8 @@ class OrbController extends ChangeNotifier {
         }
         final harness = await MobileHarness.forTurn(
           turnKey: '${turn.thread}:${turn.answer}',
+          programControl: programControl,
+          reviewAction: reviewAction,
         );
         harness.addInstructions(context);
         final priorTools = meta['localTools'] as List? ?? [];
@@ -489,6 +495,7 @@ class OrbController extends ChangeNotifier {
         _memoryTask = _remember(connection, question, activeId!, answerId);
       }
       _run = null;
+      _programControl = null;
       run.complete();
       _notify();
       if (queuedText != null && !_disposed) {
@@ -536,6 +543,7 @@ class OrbController extends ChangeNotifier {
   void stop() {
     if (!busy) return;
     _stopped = true;
+    _programControl?.cancel();
     _upload?.close();
     _provider.stop();
   }
