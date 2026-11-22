@@ -83,7 +83,7 @@ Future<Map<String, dynamic>> runStoredProgram(
     }
     final path = pathArgument(value);
     if (!path.contains('/')) return '$folder$path';
-    if (folder.isEmpty || !path.startsWith(folder)) {
+    if (!path.startsWith(folder)) {
       throw OrbException(
         '路径 $path 需要位于入口文件 ${source.path} 的项目目录中。处理已有数据时，把入口保存在这些输入的同一目录或共同父目录。目录内可用 ./ 相对路径或完整工作区路径。',
       );

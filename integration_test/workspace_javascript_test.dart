@@ -31,6 +31,37 @@ for (const sku of [...amounts.keys()].sort()) {
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('a root entry can use selected files in different folders', (
+    _,
+  ) async {
+    final workspace = await Workspace.open();
+    final id = DateTime.now().microsecondsSinceEpoch;
+    final input = WorkFile('data-$id/orders.tsv', '订购');
+    final suffix = WorkFile('labels-$id/suffix.txt', '完成');
+    final script = WorkFile(
+      'summary-$id.js',
+      "console.log(readText('${input.path}') + readStdin());",
+    );
+    final output = 'reports-$id/summary.txt';
+    addTearDown(() async {
+      for (final path in [script.path, input.path, suffix.path, output]) {
+        await workspace.remove(path);
+      }
+    });
+    for (final file in [script, input, suffix]) {
+      await workspace.save(file);
+    }
+    final result = await runStoredProgram(workspace, {
+      'path': script.path,
+      'input_paths': [input.path],
+      'stdin_path': suffix.path,
+      'output_path': output,
+    });
+    expect(result['exit_code'], 0, reason: result['stderr'] as String?);
+    expect(result['output_path'], output);
+    expect((await workspace.read(output))?.text, '订购完成\n');
+  });
+
   testWidgets(
     'saved JavaScript joins selected UTF-8 files and preserves full output',
     (_) async {
