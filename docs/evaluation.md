@@ -10,7 +10,7 @@
 | 扩展 | 可导入标准 Markdown 技能，主动启用，订阅更新、验证新版本和回退。远端服务可用 MCP Streamable HTTP。 | 实测技能从文件安装、启用、更新、回退及导出。真实 MCP 服务验证授权、读取校验码和撤销后停止调用。 |
 | 迁移数据 | 选择对话、附件、记忆、提示、任务、工作文件和技能。ZIP 有 Markdown 索引，桌面可直接读写。支持旧包、加密包、双端冲突保留和重复导入。 | Android 系统文件选择器配合桌面压缩工具往返。Claude Code 改写的工作文件导回后内容匹配，OpenCode 也按索引读到了正文。 |
 
-独立安装默认选中云端 DeepSeek，支持用户自己的 OpenAI、Claude 或兼容服务。手机保留数据和执行工具，发送前需配置所选服务。聊天、转写和朗读使用所选服务。手机上运行约 20 KB 的语音活动检测库来判断录音中是否可能有人声。Android 上可以安装终端环境，Orb 当前提供结构化工具调用。Orb 内置的工具作用于自己的应用沙盒和用户授权的服务，远端 MCP 当前可选只读工具。桌面助手是否会自动发现技能，取决于它采用的技能目录约定。[Android 应用沙盒](https://source.android.com/docs/security/app-sandbox) · [Agent Skills](https://agentskills.io/specification) · [MCP 工具](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+独立安装默认选中云端 DeepSeek，支持用户自己的 OpenAI、Claude 或兼容服务。手机保留数据和执行工具，发送前需配置所选服务。聊天、转写和朗读使用所选服务。手机上运行约 20 KB 的语音活动检测库来判断录音中是否可能有人声。Android 上可以安装终端环境，Orb 当前提供结构化工具调用。Orb 内置的工具作用于自己的应用沙盒和用户授权的服务，前台聊天可调用已启用的 MCP 工具，可能更改数据的调用需逐次确认。后台任务仅能调用已授权的只读 MCP 工具。桌面助手是否会自动发现技能，取决于它采用的技能目录约定。[Android 应用沙盒](https://source.android.com/docs/security/app-sandbox) · [Agent Skills](https://agentskills.io/specification) · [MCP 工具](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
 
 ## 验证范围
 
