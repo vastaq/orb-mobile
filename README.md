@@ -2,7 +2,11 @@
 
 Orb 是一款 Android 和 iOS 聊天助手。你选模型，手机保存对话、记忆和工作文件。可以从一句「记住我喜欢短一点的书评」开始，下一次聊书时继续用这个偏好。想在电脑上接着写，也可以把选中的对话和笔记导出成 Markdown。
 
-[从源码运行](#从源码运行) · [接入模型](#接入模型) · [试试工作区](#试试工作区)
+**[下载 Android 安装包（ARM64 APK）](https://github.com/vastaq/orb-mobile/releases/download/v0.3.0-build.9/Orb-Android-arm64.apk)** · [0.3.0 Build 9 版本说明与校验值](https://github.com/vastaq/orb-mobile/releases/tag/v0.3.0-build.9)
+
+在手机浏览器登录有本仓库访问权限的 GitHub 账号，下载后打开 APK 安装。iOS 可从源码运行。
+
+[接入模型](#接入模型) · [试试工作区](#试试工作区) · [从源码运行](#从源码运行)
 
 <p>
   <a href="docs/images/chat-home.png"><img src="docs/images/chat-home.png" width="165" alt="Orb 聊天首页，顶部可选择模型，底部可输入文字或语音"></a>
